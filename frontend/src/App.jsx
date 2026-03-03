@@ -1,4 +1,5 @@
 import { Route, Routes } from "react-router-dom"
+import { useAppUI } from "./context/AppUIContext.jsx"
 import AppLayout from "./layouts/AppLayout.jsx"
 import AuthLayout from "./layouts/AuthLayout.jsx"
 import Landing from "./pages/Landing.jsx"
@@ -36,9 +37,37 @@ import Contact from "./pages/Contact.jsx"
 import Knowledgebase from "./pages/Knowledgebase.jsx"
 import Status from "./pages/Status.jsx"
 import NotFound from "./pages/NotFound.jsx"
+import MaintenancePage from "./pages/MaintenancePage.jsx"
 import ProtectedAdminRoute from "./components/ProtectedAdminRoute.jsx"
 
+function useIsAdmin() {
+  try {
+    const user = JSON.parse(localStorage.getItem("user") || "{}")
+    return user.role === "admin"
+  } catch {
+    return false
+  }
+}
+
 export default function App() {
+  const { siteSettings } = useAppUI()
+  const isAdmin = useIsAdmin()
+
+  // Show maintenance page for non-admin users when maintenance mode is on
+  if (siteSettings.maintenanceMode && !isAdmin) {
+    return (
+      <Routes>
+        {/* Allow login so admins can still sign in */}
+        <Route element={<AuthLayout />}>
+          <Route path="/login" element={<Login />} />
+        </Route>
+        <Route path="/auth/callback" element={<OAuthCallback />} />
+        {/* Everything else shows the maintenance page */}
+        <Route path="*" element={<MaintenancePage />} />
+      </Routes>
+    )
+  }
+
   return (
     <Routes>
       <Route path="/" element={<Landing />} />

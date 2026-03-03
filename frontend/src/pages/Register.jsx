@@ -2,21 +2,7 @@ import { useState } from "react"
 import { Link } from "react-router-dom"
 import Logo from "../components/Logo.jsx"
 import { AlertCircle } from "lucide-react"
-
-// Detect API URL based on environment
-const getApiUrl = () => {
-  if (import.meta.env.VITE_API_URL) {
-    return import.meta.env.VITE_API_URL
-  }
-  // Codespaces detection
-  if (window.location.hostname.includes("app.github.dev")) {
-    const baseUrl = window.location.origin.replace("-5173.", "-4000.")
-    return `${baseUrl}/api`
-  }
-  return 'http://localhost:4000/api'
-}
-
-const API_URL = getApiUrl()
+import { getBackendBaseUrl } from "../services/api.js"
 
 export default function Register() {
   const [error] = useState(() => {
@@ -27,6 +13,8 @@ export default function Register() {
     }
     return "";
   })
+
+  const API_URL = `${getBackendBaseUrl()}/api`
 
   const handleGoogleLogin = () => {
     window.location.href = `${API_URL}/auth/google`;

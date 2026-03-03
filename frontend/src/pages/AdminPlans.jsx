@@ -2,7 +2,7 @@ import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import {
   Plus, Edit2, Trash2, X, Package, Server, Cpu, HardDrive, Zap,
-  Sparkles, Star, Crown, Shield, Rocket, Gift, Gem, Trophy, Circle
+  Sparkles, Star, Crown, Shield, Rocket, Gift, Gem, Trophy, Circle, Diamond
 } from "lucide-react"
 import AdminNav from "../components/AdminNav.jsx"
 import SectionHeader from "../components/SectionHeader.jsx"
@@ -13,7 +13,7 @@ import { api } from "../services/api.js"
 
 const iconMap = {
   Package, Server, Cpu, HardDrive, Zap, Sparkles, Star, Crown,
-  Shield, Rocket, Gift, Gem, Trophy, Circle
+  Shield, Rocket, Gift, Gem, Trophy, Circle, Diamond
 }
 
 const DURATION_TYPES = [

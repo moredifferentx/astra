@@ -3,7 +3,14 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { CheckCircle, XCircle, Loader2, Mail } from 'lucide-react';
 import Logo from '../components/Logo';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+function getApiUrl() {
+  if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL
+  if (window.location.hostname.includes('app.github.dev')) {
+    return window.location.origin.replace('-5173.', '-4000.') + '/api'
+  }
+  return 'http://localhost:4000/api'
+}
+const API_URL = getApiUrl();
 
 export default function VerifyEmail() {
   const [searchParams] = useSearchParams();
@@ -27,7 +34,7 @@ export default function VerifyEmail() {
 
   const verifyEmail = async (token) => {
     try {
-      const response = await fetch(`${API_URL}/api/auth/verify-email?token=${token}`);
+      const response = await fetch(`${API_URL}/auth/verify-email?token=${token}`);
       const data = await response.json();
 
       if (response.ok) {
@@ -57,7 +64,7 @@ export default function VerifyEmail() {
         return;
       }
 
-      const response = await fetch(`${API_URL}/api/auth/resend-verification`, {
+      const response = await fetch(`${API_URL}/auth/resend-verification`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email })

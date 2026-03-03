@@ -8,6 +8,7 @@ import { dirname, join } from "path"
 import { env } from "./config/env.js"
 import { rateLimiter } from "./middlewares/rateLimit.js"
 import { errorHandler } from "./middlewares/errorHandler.js"
+import { maintenanceGuard } from "./middlewares/maintenance.js"
 import routes from "./routes/index.js"
 import passport from "./config/passport.js"
 
@@ -149,6 +150,10 @@ console.log("[Server] Serving static files from:", uploadsPath)
 app.get("/health", (req, res) => {
   res.json({ status: "ok", service: "astranodes-api" })
 })
+
+// Maintenance mode guard — must come after static file serving and health check,
+// but before API routes. Admins bypass, public settings endpoint always allowed.
+app.use(maintenanceGuard)
 
 app.use("/api", routes)
 

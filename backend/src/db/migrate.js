@@ -240,14 +240,16 @@ export default async function migrate() {
           background_image,
           background_overlay_opacity,
           favicon_path,
+          logo_path,
           hero_title,
           hero_subtitle,
           maintenance_mode
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           "AstraNodes",
           "",
           0.45,
+          "",
           "",
           "Hosting crafted for Minecraft empires.",
           "Launch servers in seconds with premium infrastructure.",
@@ -256,6 +258,61 @@ export default async function migrate() {
       ).catch((e) => console.warn("[Migration] site_settings seed warn:", e.message))
       console.log("[Migration] ✓ Seeded site_settings")
     }
+
+    // Add logo_path column to site_settings if not present
+    try {
+      await runSync("ALTER TABLE site_settings ADD COLUMN logo_path TEXT DEFAULT ''")
+      console.log("[Migration] ✓ Added logo_path column to site_settings")
+    } catch {
+      // Column already exists — safe to ignore
+    }
+
+    // ── Tickets tables auto-creation ──────────────────────────────────────
+    console.log("[Migration] Ensuring tickets tables...")
+    const ticketsSqlPath = path.join(__dirname, "tickets.sql")
+    if (fs.existsSync(ticketsSqlPath)) {
+      const ticketsSql = fs.readFileSync(ticketsSqlPath, "utf-8")
+      for (const stmt of ticketsSql.split(";")) {
+        if (stmt.trim()) {
+          await runSync(stmt).catch((e) => {
+            // Ignore errors from CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS
+            if (!e.message.includes("already exists")) {
+              console.warn("[Migration] tickets.sql stmt warn:", e.message)
+            }
+          })
+        }
+      }
+      console.log("[Migration] ✓ Tickets tables ensured")
+    } else {
+      console.warn("[Migration] tickets.sql not found, skipping")
+    }
+
+    // ── Tickets upgrade columns (priority, username, email, image) ───────
+    try {
+      await runSync("ALTER TABLE tickets ADD COLUMN priority TEXT DEFAULT 'Medium' CHECK(priority IN ('Low', 'Medium', 'High'))")
+      console.log("[Migration] ✓ Added priority column to tickets")
+    } catch { /* already exists */ }
+    try {
+      await runSync("ALTER TABLE tickets ADD COLUMN username TEXT")
+      console.log("[Migration] ✓ Added username column to tickets")
+    } catch { /* already exists */ }
+    try {
+      await runSync("ALTER TABLE tickets ADD COLUMN email TEXT")
+      console.log("[Migration] ✓ Added email column to tickets")
+    } catch { /* already exists */ }
+    try {
+      await runSync("ALTER TABLE ticket_messages ADD COLUMN image TEXT")
+      console.log("[Migration] ✓ Added image column to ticket_messages")
+    } catch { /* already exists */ }
+    // Backfill missing username/email from users table
+    try {
+      await runSync(
+        `UPDATE tickets SET username = (SELECT email FROM users WHERE users.id = tickets.user_id), email = (SELECT email FROM users WHERE users.id = tickets.user_id) WHERE username IS NULL`
+      )
+    } catch (e) {
+      console.warn("[Migration] tickets backfill warn:", e.message)
+    }
+    await runSync("CREATE INDEX IF NOT EXISTS idx_tickets_priority ON tickets(priority)").catch(() => {})
 
     console.log("[Migration] ✓ Database migrated successfully")
   } catch (error) {

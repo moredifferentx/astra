@@ -20,6 +20,18 @@ function ensureFavicon(pathWithVersion) {
     document.head.appendChild(link)
   }
 
+  // Set proper MIME type based on file extension
+  const cleanPath = pathWithVersion.split("?")[0].toLowerCase()
+  if (cleanPath.endsWith(".svg")) {
+    link.type = "image/svg+xml"
+  } else if (cleanPath.endsWith(".png")) {
+    link.type = "image/png"
+  } else if (cleanPath.endsWith(".ico")) {
+    link.type = "image/x-icon"
+  } else {
+    link.removeAttribute("type")
+  }
+
   link.href = pathWithVersion
 }
 
