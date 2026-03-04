@@ -646,7 +646,9 @@ server {
     }
 
     # ── Uploaded files ─────────────────────────────────────────────────────
-    location /uploads/ {
+    # ^~ gives this prefix match priority over the static-asset regex below,
+    # so /uploads/favicon.png is proxied to the backend (not served from root).
+    location ^~ /uploads/ {
         proxy_pass       http://127.0.0.1:${APP_PORT}/uploads/;
         proxy_set_header Host \$host;
     }
@@ -776,7 +778,9 @@ server {
     }
 
     # ── Uploaded files ─────────────────────────────────────────────────────
-    location /uploads/ {
+    # ^~ gives this prefix match priority over the static-asset regex below,
+    # so /uploads/favicon.png is proxied to the backend (not served from root).
+    location ^~ /uploads/ {
         proxy_pass       http://127.0.0.1:${APP_PORT}/uploads/;
         proxy_set_header Host \$host;
     }

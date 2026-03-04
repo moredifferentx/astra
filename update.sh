@@ -311,7 +311,9 @@ server {
     }
 
     # ── Uploaded files ─────────────────────────────────────────────────────
-    location /uploads/ {
+    # ^~ gives this prefix match priority over the static-asset regex below,
+    # so /uploads/favicon.png is proxied to the backend (not served from root).
+    location ^~ /uploads/ {
         proxy_pass       http://127.0.0.1:${APP_PORT}/uploads/;
         proxy_set_header Host \$host;
     }
@@ -350,6 +352,14 @@ NGINXCONF
     # ── Let's Encrypt mode: don't overwrite certbot-managed config ──
     # Certbot manages the Nginx config in this mode; just reload.
     info "Let's Encrypt mode — Nginx config managed by certbot (not overwritten)"
+
+    # Patch /uploads/ location to use ^~ prefix if not already done.
+    # This ensures uploaded assets (favicon, logo, background) are proxied to
+    # the backend instead of being matched by the static-asset caching regex.
+    if grep -q 'location /uploads/' "$NGINX_CONF" 2>/dev/null; then
+      sed -i 's|location /uploads/|location ^~ /uploads/|g' "$NGINX_CONF"
+      success "Patched /uploads/ location with ^~ prefix in existing Nginx config"
+    fi
   fi
 
   # Validate and reload
