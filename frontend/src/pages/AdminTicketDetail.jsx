@@ -5,7 +5,7 @@ import SectionHeader from "../components/SectionHeader.jsx"
 import Badge from "../components/Badge.jsx"
 import ConfirmModal from "../components/ConfirmModal.jsx"
 import { useAppUI } from "../context/AppUIContext.jsx"
-import { api } from "../services/api.js"
+import { api, getBackendBaseUrl } from "../services/api.js"
 
 export default function AdminTicketDetail() {
   const { id } = useParams()
@@ -24,13 +24,7 @@ export default function AdminTicketDetail() {
   const navigate = useNavigate()
   const { showSuccess, showError } = useAppUI()
 
-  const getApiUrl = () => {
-    if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL.replace("/api", "")
-    if (window.location.hostname.includes("app.github.dev")) {
-      return window.location.origin.replace("-5173.", "-4000.")
-    }
-    return "http://localhost:4000"
-  }
+  const getApiUrl = () => getBackendBaseUrl()
 
   const handleImageChange = (e) => {
     const file = e.target.files[0]

@@ -49,7 +49,7 @@ export default function Dashboard() {
     )
   }
 
-  const userName = user?.username || "User"
+  const userName = user?.username || user?.email?.split("@")[0] || "User"
   const activeServers = servers.filter((s) => s.status === "active").length
 
   return (

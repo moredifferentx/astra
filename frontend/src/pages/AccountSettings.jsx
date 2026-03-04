@@ -131,8 +131,16 @@ function ResetPasswordModal({ open, onClose }) {
   )
 }
 
+function getApiUrl() {
+  if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL
+  if (window.location.hostname.includes('app.github.dev')) {
+    return window.location.origin.replace('-5173.', '-4000.') + '/api'
+  }
+  return 'http://localhost:4000/api'
+}
+
 export default function AccountSettings() {
-  const [user] = useState(() => {
+  const [user, setUser] = useState(() => {
     const stored = localStorage.getItem("user")
     return stored ? JSON.parse(stored) : null
   })
@@ -145,6 +153,16 @@ export default function AccountSettings() {
       navigate("/login")
       return
     }
+    // Fetch fresh user data from server
+    fetch(`${getApiUrl()}/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(u => {
+        if (u) {
+          localStorage.setItem("user", JSON.stringify(u))
+          setUser(u)
+        }
+      })
+      .catch(() => {})
   }, [navigate])
 
   return (
@@ -173,6 +191,7 @@ export default function AccountSettings() {
         </div>
       </div>
 
+      {!user?.oauth_provider && (
       <div className="card-3d rounded-2xl bg-dark-800/60 backdrop-blur-sm border border-white/10 p-6 space-y-4 max-w-lg">
         <div className="flex items-center gap-3 mb-2">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-primary-500/30 bg-primary-500/10">
@@ -190,6 +209,21 @@ export default function AccountSettings() {
           Reset Password
         </button>
       </div>
+      )}
+
+      {user?.oauth_provider && (
+      <div className="card-3d rounded-2xl bg-dark-800/60 backdrop-blur-sm border border-white/10 p-6 space-y-4 max-w-lg">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-dark-700/50">
+            <Lock className="h-5 w-5 text-slate-400" />
+          </div>
+          <h3 className="text-base font-semibold text-white">Security</h3>
+        </div>
+        <p className="text-sm text-slate-400">
+          Your account is managed via <span className="capitalize font-semibold text-slate-200">{user.oauth_provider}</span> OAuth. Password management is handled by your OAuth provider.
+        </p>
+      </div>
+      )}
 
       <ResetPasswordModal open={passwordModalOpen} onClose={() => setPasswordModalOpen(false)} />
     </div>

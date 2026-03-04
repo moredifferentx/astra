@@ -146,6 +146,7 @@ CREATE TABLE IF NOT EXISTS site_settings (
   background_image TEXT,
   background_overlay_opacity REAL,
   favicon_path TEXT,
+  logo_path TEXT DEFAULT '',
   hero_title TEXT,
   hero_subtitle TEXT,
   maintenance_mode INTEGER DEFAULT 0

@@ -3,7 +3,7 @@
 CREATE TABLE IF NOT EXISTS tickets (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL,
-  category TEXT NOT NULL CHECK (category IN ('Billing', 'Server Issue', 'Bug', 'Other')),
+  category TEXT NOT NULL CHECK (category IN ('Billing', 'Server Issue', 'Bug', 'Other', 'General Inquiry')),
   subject TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('open', 'closed')) DEFAULT 'open',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),

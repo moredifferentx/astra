@@ -317,12 +317,15 @@ router.post("/resend-verification", authRateLimiter, async (req, res, next) => {
 // GET /me — return the authenticated user's profile
 // ============================================================================
 router.get("/me", requireAuth, async (req, res) => {
+  // Fetch oauth_provider for the user so frontend can conditionally show password reset
+  const fullUser = await getOne("SELECT oauth_provider FROM users WHERE id = ?", [req.user.id]).catch(() => null)
   return res.json({
     id: req.user.id,
     email: req.user.email,
     role: req.user.role,
     coins: req.user.coins,
-    balance: req.user.balance
+    balance: req.user.balance,
+    oauth_provider: fullUser?.oauth_provider || null
   })
 })
 

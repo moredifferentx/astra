@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from "react"
+import { useNavigate } from "react-router-dom"
 import { ChevronDown, User, Settings, LogOut, Coins } from "lucide-react"
 
 export default function Topbar() {
+  const navigate = useNavigate()
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef(null)
   const user = (() => {
@@ -24,7 +26,7 @@ export default function Topbar() {
   const handleLogout = () => {
     localStorage.removeItem("token")
     localStorage.removeItem("user")
-    window.location.href = "/login"
+    navigate("/login")
   }
 
   return (

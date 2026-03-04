@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import Badge from "../components/Badge.jsx"
-import { api } from "../services/api.js"
+import { api, getBackendBaseUrl } from "../services/api.js"
 
 export default function TicketDetail() {
   const { id } = useParams()
@@ -16,13 +16,7 @@ export default function TicketDetail() {
   const messagesEndRef = useRef(null)
   const navigate = useNavigate()
 
-  const getApiUrl = () => {
-    if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL.replace("/api", "")
-    if (window.location.hostname.includes("app.github.dev")) {
-      return window.location.origin.replace("-5173.", "-4000.")
-    }
-    return "http://localhost:4000"
-  }
+  const getApiUrl = () => getBackendBaseUrl()
 
   const handleImageChange = (e) => {
     const file = e.target.files[0]

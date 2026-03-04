@@ -11,15 +11,15 @@ if (!existsSync(uploadsDir)) {
   mkdirSync(uploadsDir, { recursive: true })
 }
 
-const ALLOWED_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp", ".ico"])
+const ALLOWED_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp", ".ico", ".svg"])
 const ALLOWED_MIMETYPES = new Set([
   "image/jpeg",
   "image/jpg",
   "image/png",
   "image/webp",
   "image/x-icon",
-  "image/vnd.microsoft.icon"
-  // SVG intentionally excluded — SVG files can contain embedded JavaScript/XSS
+  "image/vnd.microsoft.icon",
+  "image/svg+xml"
 ])
 
 function resolveExtension(file) {
@@ -27,6 +27,7 @@ function resolveExtension(file) {
   if (mime === "image/png") return ".png"
   if (mime === "image/webp") return ".webp"
   if (mime === "image/x-icon" || mime === "image/vnd.microsoft.icon") return ".ico"
+  if (mime === "image/svg+xml") return ".svg"
 
   const originalExt = extname(file.originalname || "").toLowerCase()
   if (ALLOWED_EXTENSIONS.has(originalExt)) return originalExt
