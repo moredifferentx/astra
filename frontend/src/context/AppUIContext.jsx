@@ -102,7 +102,11 @@ export function AppUIProvider({ children }) {
 
     if (siteSettings.faviconPath) {
       const ts = Date.now()
-      ensureFavicon(`${toFullUrl(siteSettings.faviconPath)}?v=${ts}`)
+      const faviconUrl = `${toFullUrl(siteSettings.faviconPath)}?v=${ts}`
+      // Verify the favicon actually exists before setting it (avoids 404 console errors)
+      fetch(faviconUrl, { method: "HEAD" })
+        .then((r) => { if (r.ok) ensureFavicon(faviconUrl) })
+        .catch(() => { /* favicon not available, skip */ })
     }
   }, [siteSettings])
 

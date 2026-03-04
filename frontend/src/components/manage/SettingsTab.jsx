@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { Loader2, Cpu, HardDrive, MemoryStick } from "lucide-react"
+import { Loader2, Cpu, HardDrive, MemoryStick, Network } from "lucide-react"
 import { api } from "../../services/api.js"
 
 function ResourceCard({ icon: Icon, label, value, max, unit }) {
