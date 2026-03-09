@@ -115,8 +115,14 @@ CREATE TABLE IF NOT EXISTS utr_submissions (
 
 CREATE INDEX IF NOT EXISTS idx_servers_status ON servers(status);
 CREATE INDEX IF NOT EXISTS idx_servers_expiry ON servers(expires_at);
+CREATE INDEX IF NOT EXISTS idx_servers_user ON servers(user_id);
 CREATE INDEX IF NOT EXISTS idx_coupons_code ON coupons(code);
 CREATE INDEX IF NOT EXISTS idx_coupon_redemptions_coupon ON coupon_redemptions(coupon_id);
+CREATE INDEX IF NOT EXISTS idx_coupon_redemptions_user ON coupon_redemptions(user_id);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_oauth ON users(oauth_provider, oauth_id);
+CREATE INDEX IF NOT EXISTS idx_utr_submissions_user ON utr_submissions(user_id);
+CREATE INDEX IF NOT EXISTS idx_utr_submissions_status ON utr_submissions(status);
 
 -- ─── Dynamic Front Page ──────────────────────────────────────────────────────
 
@@ -201,4 +207,4 @@ CREATE TABLE IF NOT EXISTS server_backups (
   FOREIGN KEY (server_id) REFERENCES servers(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_server_backups_server ON server_backups(server_id);
+CREATE INDEX IF NOT EXISTS idx_server_backups_server ON server_backups(server_id);\n\n-- ─── Audit Log (admin action tracking) ───────────────────────────────────────\n\nCREATE TABLE IF NOT EXISTS audit_log (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  admin_id INTEGER NOT NULL,\n  action TEXT NOT NULL,\n  target_type TEXT,\n  target_id INTEGER,\n  details TEXT,\n  ip_address TEXT,\n  created_at TEXT NOT NULL DEFAULT (datetime('now')),\n  FOREIGN KEY (admin_id) REFERENCES users(id)\n);\n\nCREATE INDEX IF NOT EXISTS idx_audit_log_admin ON audit_log(admin_id);\nCREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);

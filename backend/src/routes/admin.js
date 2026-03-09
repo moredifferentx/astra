@@ -5,6 +5,7 @@ import { requireAuth, requireAdmin } from "../middlewares/auth.js"
 import { query, getOne, runSync, transaction } from "../config/db.js"
 import { pterodactyl } from "../services/pterodactyl.js"
 import { approveSubmission, rejectSubmission, deleteScreenshot } from "../services/utrService.js"
+import { auditLog } from "../utils/auditLog.js"
 
 const router = Router()
 
@@ -99,6 +100,7 @@ router.patch("/users/:id/flag", validate(flagSchema), async (req, res, next) => 
       "UPDATE users SET flagged = ? WHERE id = ?",
       [req.body.flagged ? 1 : 0, userId]
     )
+    auditLog({ adminId: req.user.id, action: req.body.flagged ? "flag_user" : "unflag_user", targetType: "user", targetId: userId, ip: req.ip })
     res.json({ status: "ok" })
   } catch (error) {
     next(error)
@@ -123,6 +125,7 @@ router.patch("/users/:id/role", validate(roleSchema), async (req, res, next) => 
       "UPDATE users SET role = ? WHERE id = ?",
       [req.body.role, userId]
     )
+    auditLog({ adminId: req.user.id, action: "change_role", targetType: "user", targetId: userId, details: { from: user.role, to: req.body.role }, ip: req.ip })
     
     res.json({ 
       status: "ok", 
@@ -176,6 +179,7 @@ router.delete("/users/:id", async (req, res, next) => {
       runSync("DELETE FROM servers WHERE user_id = ?", [userId])
       runSync("DELETE FROM users WHERE id = ?", [userId])
     })
+    auditLog({ adminId: req.user.id, action: "delete_user", targetType: "user", targetId: userId, details: { serversDeleted: userServers.length }, ip: req.ip })
 
     res.json({ status: "ok" })
   } catch (error) {
@@ -208,6 +212,7 @@ router.post("/plans/coin", validate(coinPlanSchema), async (req, res, next) => {
       ]
     )
     console.log("[ADMIN] Coin plan created with ID:", info.lastID)
+    auditLog({ adminId: req.user.id, action: "create_plan", targetType: "plan_coin", targetId: info.lastID, details: { name: req.body.name }, ip: req.ip })
     res.status(201).json({ id: info.lastID })
   } catch (error) {
     console.error("[ADMIN] Error creating coin plan:", error.message)
@@ -236,6 +241,7 @@ router.post("/plans/real", validate(realPlanSchema), async (req, res, next) => {
         req.body.swap || 0
       ]
     )
+    auditLog({ adminId: req.user.id, action: "create_plan", targetType: "plan_real", targetId: info.lastID, details: { name: req.body.name }, ip: req.ip })
     res.status(201).json({ id: info.lastID })
   } catch (error) {
     next(error)
@@ -314,6 +320,7 @@ router.delete("/plans/coin/:id", async (req, res, next) => {
       return res.status(400).json({ error: "Cannot delete plan — active servers are using it" })
     }
     await runSync("DELETE FROM plans_coin WHERE id = ?", [planId])
+    auditLog({ adminId: req.user.id, action: "delete_plan", targetType: "plan_coin", targetId: planId, ip: req.ip })
     res.json({ status: "ok" })
   } catch (error) {
     next(error)
@@ -333,6 +340,7 @@ router.delete("/plans/real/:id", async (req, res, next) => {
       return res.status(400).json({ error: "Cannot delete plan — active servers are using it" })
     }
     await runSync("DELETE FROM plans_real WHERE id = ?", [planId])
+    auditLog({ adminId: req.user.id, action: "delete_plan", targetType: "plan_real", targetId: planId, ip: req.ip })
     res.json({ status: "ok" })
   } catch (error) {
     next(error)
@@ -451,6 +459,7 @@ router.post("/servers/:id/suspend", async (req, res, next) => {
       "UPDATE servers SET status = 'suspended', suspended_at = ? WHERE id = ?",
       [new Date().toISOString(), server.id]
     )
+    auditLog({ adminId: req.user.id, action: "suspend_server", targetType: "server", targetId: serverId, ip: req.ip })
 
     res.json({ status: "suspended" })
   } catch (error) {
@@ -469,6 +478,7 @@ router.delete("/servers/:id", async (req, res, next) => {
 
     await pterodactyl.deleteServer(server.pterodactyl_server_id)
     await runSync("UPDATE servers SET status = 'deleted' WHERE id = ?", [server.id])
+    auditLog({ adminId: req.user.id, action: "delete_server", targetType: "server", targetId: serverId, ip: req.ip })
 
     res.json({ status: "deleted" })
   } catch (error) {
@@ -482,6 +492,7 @@ router.patch("/coin-settings", validate(coinSettingSchema), async (req, res, nex
       "UPDATE coin_settings SET coins_per_minute = ? WHERE id = 1",
       [req.body.coins_per_minute]
     )
+    auditLog({ adminId: req.user.id, action: "update_coin_settings", targetType: "settings", details: { coins_per_minute: req.body.coins_per_minute }, ip: req.ip })
     res.json({ status: "ok" })
   } catch (error) {
     next(error)
@@ -505,6 +516,7 @@ router.patch("/utr/:id/approve", async (req, res, next) => {
     if (!utrId || isNaN(utrId)) return res.status(400).json({ error: "Invalid UTR ID" })
     const submission = await approveSubmission(utrId)
     await deleteScreenshot(submission.screenshot_path)
+    auditLog({ adminId: req.user.id, action: "approve_utr", targetType: "utr", targetId: utrId, ip: req.ip })
     res.json({ status: "approved" })
   } catch (error) {
     next(error)
@@ -517,6 +529,7 @@ router.patch("/utr/:id/reject", async (req, res, next) => {
     if (!utrId || isNaN(utrId)) return res.status(400).json({ error: "Invalid UTR ID" })
     const submission = await rejectSubmission(utrId)
     await deleteScreenshot(submission.screenshot_path)
+    auditLog({ adminId: req.user.id, action: "reject_utr", targetType: "utr", targetId: utrId, ip: req.ip })
     res.json({ status: "rejected" })
   } catch (error) {
     next(error)

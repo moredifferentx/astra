@@ -337,6 +337,46 @@ export default async function migrate() {
       await runSync("ALTER TABLE plans_real ADD COLUMN swap INTEGER NOT NULL DEFAULT 0")
       console.log("[Migration] ✓ Added swap column to plans_real")
     } catch { /* already exists */ }
+    // ── Performance indexes for scalability ────────────────────────
+    console.log("[Migration] Ensuring performance indexes...")
+    const indexes = [
+      "CREATE INDEX IF NOT EXISTS idx_servers_user ON servers(user_id)",
+      "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
+      "CREATE INDEX IF NOT EXISTS idx_users_oauth ON users(oauth_provider, oauth_id)",
+      "CREATE INDEX IF NOT EXISTS idx_coupon_redemptions_user ON coupon_redemptions(user_id)",
+      "CREATE INDEX IF NOT EXISTS idx_utr_submissions_user ON utr_submissions(user_id)",
+      "CREATE INDEX IF NOT EXISTS idx_utr_submissions_status ON utr_submissions(status)"
+    ]
+    for (const idx of indexes) {
+      await runSync(idx).catch(() => {})
+    }
+    console.log("[Migration] ✓ Performance indexes ensured")
+
+    // ── Run ANALYZE to update query planner statistics ──────────────
+    try {
+      await runSync("ANALYZE")
+      console.log("[Migration] ✓ ANALYZE complete")
+    } catch (e) {
+      console.warn("[Migration] ANALYZE warn:", e.message)
+    }
+
+    // ── Audit log table ─────────────────────────────────────────────────
+    await runSync(`
+      CREATE TABLE IF NOT EXISTS audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        admin_id INTEGER NOT NULL,
+        action TEXT NOT NULL,
+        target_type TEXT,
+        target_id INTEGER,
+        details TEXT,
+        ip_address TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (admin_id) REFERENCES users(id)
+      )
+    `).catch(() => {})
+    await runSync("CREATE INDEX IF NOT EXISTS idx_audit_log_admin ON audit_log(admin_id)").catch(() => {})
+    await runSync("CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at)").catch(() => {})
+    console.log("[Migration] ✓ Audit log table ensured")
 
     console.log("[Migration] ✓ Database migrated successfully")
   } catch (error) {

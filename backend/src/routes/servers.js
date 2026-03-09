@@ -4,6 +4,7 @@ import { validate } from "../middlewares/validate.js"
 import { requireAuth } from "../middlewares/auth.js"
 import { query, getOne, runSync, transaction } from "../config/db.js"
 import { addDays, getDurationDays } from "../utils/durations.js"
+import { getPlan, getPurchasePrice, getRenewalPrice, getBalanceField } from "../utils/planHelpers.js"
 import { pterodactyl } from "../services/pterodactyl.js"
 import { pteroManage } from "../services/pteroManage.js"
 import { getLimits } from "../cron/expiryCron.js"
@@ -30,31 +31,6 @@ const renewSchema = z.object({
     server_id: z.number().int().positive()
   })
 })
-
-async function getPlan(planType, planId) {
-  const table = planType === "coin" ? "plans_coin" : "plans_real"
-  return await getOne(`SELECT * FROM ${table} WHERE id = ?`, [planId])
-}
-
-function getPrice(planType, plan) {
-  return planType === "coin" ? plan.coin_price : plan.price
-}
-
-// Purchase price: coin plans use initial_price (can be 0 = free first buy)
-function getPurchasePrice(planType, plan) {
-  if (planType === "coin") return plan.initial_price ?? plan.coin_price
-  return plan.price
-}
-
-// Renewal price: coin plans use renewal_price
-function getRenewalPrice(planType, plan) {
-  if (planType === "coin") return plan.renewal_price ?? plan.coin_price
-  return plan.price
-}
-
-function getBalanceField(planType) {
-  return planType === "coin" ? "coins" : "balance"
-}
 
 // Return live available Pterodactyl nodes for location picker
 router.get("/nodes", requireAuth, async (req, res, next) => {

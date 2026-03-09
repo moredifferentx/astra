@@ -21,11 +21,38 @@ try {
 }
 
 // better-sqlite3 is synchronous and handles busy internally
-db.pragma("busy_timeout = 5000")
+db.pragma("busy_timeout = 10000")
 db.pragma("journal_mode = WAL")
 db.pragma("foreign_keys = ON")
 db.pragma("secure_delete = ON")
-console.log("[DB] ✓ WAL mode, foreign keys, secure_delete enabled")
+
+// ── Performance tuning for 100+ concurrent users ─────────────────────────
+// Increase page cache to ~64 MB (negative = KB). Default is ~2 MB.
+db.pragma("cache_size = -65536")
+// Memory-mapped I/O: let the OS cache up to 256 MB of the DB file.
+db.pragma("mmap_size = 268435456")
+// Keep temporary tables/indexes in memory instead of disk.
+db.pragma("temp_store = MEMORY")
+// Synchronous NORMAL is safe with WAL mode and ~2x faster than FULL.
+db.pragma("synchronous = NORMAL")
+// Limit WAL file size to 64 MB before auto-checkpoint.
+db.pragma("wal_autocheckpoint = 1000")
+
+console.log("[DB] ✓ WAL mode, foreign keys, secure_delete, performance tuning enabled")
+
+// ── Graceful shutdown ────────────────────────────────────────────────────
+// Checkpoint WAL and close the database cleanly on process exit.
+function closeDb() {
+  try {
+    db.pragma("wal_checkpoint(TRUNCATE)")
+    db.close()
+    console.log("[DB] ✓ Database closed gracefully")
+  } catch (e) {
+    console.error("[DB] Error closing database:", e.message)
+  }
+}
+process.on("SIGTERM", closeDb)
+process.on("SIGINT", closeDb)
 
 // Keep the same async API surface so no other files need changes.
 // better-sqlite3 is synchronous under the hood — wrapping in Promise

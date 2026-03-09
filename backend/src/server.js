@@ -30,6 +30,23 @@ async function startup() {
       console.log(`[Server] ✓ Health endpoint: http://localhost:${env.PORT}/health`)
     })
 
+    // Graceful shutdown — stop accepting requests, let in-flight finish
+    const shutdown = (signal) => {
+      console.log(`[Server] ${signal} received — shutting down gracefully…`)
+      httpServer.close(() => {
+        console.log("[Server] ✓ HTTP server closed")
+        // DB close is handled by db.js SIGTERM/SIGINT handler
+        process.exit(0)
+      })
+      // Force exit after 10 seconds if connections won't drain
+      setTimeout(() => {
+        console.error("[Server] Forced exit after 10s timeout")
+        process.exit(1)
+      }, 10_000).unref()
+    }
+    process.on("SIGTERM", () => shutdown("SIGTERM"))
+    process.on("SIGINT", () => shutdown("SIGINT"))
+
     console.log("[Server] Starting cron jobs...")
     startExpiryCron()
     initBackupCron()

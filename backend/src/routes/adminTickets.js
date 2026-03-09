@@ -5,6 +5,7 @@ import { requireAuth, requireAdmin } from "../middlewares/auth.js"
 import { query, getOne, runSync, transaction } from "../config/db.js"
 import { uploadTicketImage, handleMulterError } from "../middleware/uploadMiddleware.js"
 import { sendTicketNotification } from "../utils/discordWebhook.js"
+import { auditLog } from "../utils/auditLog.js"
 
 const router = Router()
 
@@ -156,6 +157,7 @@ router.patch("/:id/status", validate(statusSchema), async (req, res, next) => {
       "UPDATE tickets SET status = ?, updated_at = datetime('now') WHERE id = ?",
       [status, req.params.id]
     )
+    auditLog({ adminId: req.user.id, action: `ticket_${status}`, targetType: "ticket", targetId: Number(req.params.id), ip: req.ip })
 
     // Send Discord notification
     try {
@@ -189,6 +191,7 @@ router.delete("/:id", async (req, res, next) => {
       txRun("DELETE FROM ticket_messages WHERE ticket_id = ?", [ticketId])
       txRun("DELETE FROM tickets WHERE id = ?", [ticketId])
     })
+    auditLog({ adminId: req.user.id, action: "delete_ticket", targetType: "ticket", targetId: ticketId, ip: req.ip })
 
     res.json({ message: "Ticket deleted successfully" })
   } catch (error) {

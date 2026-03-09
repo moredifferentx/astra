@@ -31,6 +31,14 @@ const API_URL = getApiUrl()
 
 export const api = {
   // Auth
+  getMe: async () => {
+    const token = localStorage.getItem("token")
+    if (!token) return null
+    const res = await fetch(`${API_URL}/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+    if (!res.ok) return null
+    return res.json()
+  },
+
   register: async (email, password) => {
     const res = await fetch(`${API_URL}/auth/register`, {
       method: "POST",

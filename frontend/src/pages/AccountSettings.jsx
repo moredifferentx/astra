@@ -131,14 +131,6 @@ function ResetPasswordModal({ open, onClose }) {
   )
 }
 
-function getApiUrl() {
-  if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL
-  if (window.location.hostname.includes('app.github.dev')) {
-    return window.location.origin.replace('-5173.', '-4000.') + '/api'
-  }
-  return 'http://localhost:4000/api'
-}
-
 export default function AccountSettings() {
   const [user, setUser] = useState(() => {
     const stored = localStorage.getItem("user")
@@ -153,9 +145,8 @@ export default function AccountSettings() {
       navigate("/login")
       return
     }
-    // Fetch fresh user data from server
-    fetch(`${getApiUrl()}/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.ok ? r.json() : null)
+    // Fetch fresh user data from the shared api module
+    api.getMe()
       .then(u => {
         if (u) {
           localStorage.setItem("user", JSON.stringify(u))

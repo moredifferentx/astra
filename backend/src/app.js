@@ -9,6 +9,7 @@ import { env } from "./config/env.js"
 import { rateLimiter } from "./middlewares/rateLimit.js"
 import { errorHandler } from "./middlewares/errorHandler.js"
 import { maintenanceGuard } from "./middlewares/maintenance.js"
+import { query } from "./config/db.js"
 import routes from "./routes/index.js"
 import passport from "./config/passport.js"
 
@@ -147,8 +148,25 @@ if (env.UPLOAD_DIR && env.UPLOAD_DIR !== "./uploads") {
 }
 console.log("[Server] Serving static files from:", uploadsPath)
 
-app.get("/health", (req, res) => {
-  res.json({ status: "ok", service: "astranodes-api" })
+app.get("/health", async (req, res) => {
+  try {
+    const [{ user_count }] = await query("SELECT COUNT(*) AS user_count FROM users")
+    const [{ server_count }] = await query("SELECT COUNT(*) AS server_count FROM servers WHERE status = 'active'")
+    const [{ page_count, page_size }] = await query("PRAGMA page_count")
+      .then(async ([pc]) => {
+        const [ps] = await query("PRAGMA page_size")
+        return [{ page_count: pc.page_count, page_size: ps.page_size }]
+      })
+    const dbSizeMB = ((page_count * page_size) / (1024 * 1024)).toFixed(2)
+    res.json({
+      status: "ok",
+      service: "astranodes-api",
+      uptime: Math.floor(process.uptime()),
+      db: { users: user_count, activeServers: server_count, sizeMB: Number(dbSizeMB) }
+    })
+  } catch {
+    res.json({ status: "ok", service: "astranodes-api" })
+  }
 })
 
 // Maintenance mode guard — must come after static file serving and health check,

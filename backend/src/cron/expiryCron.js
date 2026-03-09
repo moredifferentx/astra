@@ -1,34 +1,24 @@
 import cron from "node-cron"
 import { query, getOne, runSync, transaction } from "../config/db.js"
+import { db } from "../config/db.js"
 import { addDays, getDurationDays } from "../utils/durations.js"
+import { getPlan, getRenewalPrice, getBalanceField } from "../utils/planHelpers.js"
 import { pterodactyl } from "../services/pterodactyl.js"
 
-async function getPlan(planType, planId) {
-  const table = planType === "coin" ? "plans_coin" : "plans_real"
-  return await getOne(`SELECT * FROM ${table} WHERE id = ?`, [planId])
-}
-
-function getPrice(planType, plan) {
-  return planType === "coin" ? plan.coin_price : plan.price
-}
-
 // Auto-renewal always uses renewal_price for coin plans
-function getRenewalPrice(planType, plan) {
-  if (planType === "coin") return plan.renewal_price ?? plan.coin_price
-  return plan.price
-}
-
-function getBalanceField(planType) {
-  return planType === "coin" ? "coins" : "balance"
-}
+// (re-exported for backward compat with servers.js getLimits import)
 
 export function getLimits(plan) {
-  // Convert GB to MB for Pterodactyl (plan.ram and plan.storage are in GB)
-  const memory = Math.round(plan.ram * 1024)   // GB to MB (supports fractional e.g. 0.5 GB = 512 MB)
+  // Convert GB to MB for Pterodactyl (plan.ram and plan.storage are in GB).
+  // plan.ram is treated as TOTAL RAM budget (memory + swap).
+  const totalMemoryMb = Math.round(plan.ram * 1024) // supports fractional GB (e.g. 0.5 GB = 512 MB)
   const disk = Math.round(plan.storage * 1024)  // GB to MB
 
-  // Use the admin-configured swap value (in MB), defaulting to 0
-  const swap = plan.swap || 0
+  // Use the admin-configured swap value (in MB), defaulting to 0.
+  // Clamp swap so memory never goes negative.
+  const configuredSwap = Number(plan.swap) || 0
+  const swap = Math.max(0, Math.min(configuredSwap, totalMemoryMb))
+  const memory = totalMemoryMb - swap
 
   return {
     memory,
@@ -126,6 +116,16 @@ export function startExpiryCron() {
       await processGraceExpired()
     } catch (err) {
       console.error("[CRON] Expiry cron fatal error:", err.message)
+    }
+  })
+
+  // Run PRAGMA optimize daily at 3 AM — keeps SQLite query planner statistics fresh.
+  cron.schedule("0 3 * * *", () => {
+    try {
+      db.pragma("optimize")
+      console.log("[CRON] ✓ PRAGMA optimize executed")
+    } catch (err) {
+      console.error("[CRON] PRAGMA optimize error:", err.message)
     }
   })
 }
