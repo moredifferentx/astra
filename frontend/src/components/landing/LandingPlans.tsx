@@ -4,40 +4,84 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import { Check } from 'lucide-react';
+import { cn } from '@/lib/cn';
 
-interface LandingPlan {
+interface CoinPlan {
   id: number;
   name: string;
-  description: string | null;
-  priceUsd: number;
-  duration: number;
+  category: string;
   ram: number;
   cpu: number;
-  disk: number;
-  tag: string | null;
+  storage: number;
+  coinPrice: number;
+  initialPrice: number;
+  renewalPrice: number;
+  durationType: string;
+  durationDays: number;
+  backupCount: number;
+  extraPorts: number;
+  swap: number;
 }
 
-const fallbackPlans: LandingPlan[] = [
-  { id: 1, name: 'Starter', description: 'Perfect for small servers', priceUsd: 2, duration: 30, ram: 2048, cpu: 100, disk: 10240, tag: null },
-  { id: 2, name: 'Pro', description: 'For growing communities', priceUsd: 6, duration: 30, ram: 6144, cpu: 200, disk: 25600, tag: 'Most Popular' },
-  { id: 3, name: 'Elite', description: 'Maximum performance', priceUsd: 12, duration: 30, ram: 12288, cpu: 400, disk: 51200, tag: null },
-];
-
-function fmtMB(mb: number) {
-  return mb >= 1024 ? `${(mb / 1024).toFixed(0)} GB` : `${mb} MB`;
+interface RealPlan {
+  id: number;
+  name: string;
+  category: string;
+  ram: number;
+  cpu: number;
+  storage: number;
+  price: number;
+  durationType: string;
+  durationDays: number;
+  backupCount: number;
+  extraPorts: number;
+  swap: number;
 }
+
+function fmtGB(val: number) {
+  return val < 1 ? `${Math.round(val * 1024)} MB` : `${val} GB`;
+}
+
+function durationLabel(days: number) {
+  if (days >= 365) return '/yr';
+  if (days >= 30) return '/mo';
+  if (days >= 7) return '/wk';
+  return `/${days}d`;
+}
+
+type Tab = 'free' | 'paid';
 
 export function LandingPlans() {
-  const [plans, setPlans] = useState<LandingPlan[]>(fallbackPlans);
+  const [coinPlans, setCoinPlans] = useState<CoinPlan[]>([]);
+  const [realPlans, setRealPlans] = useState<RealPlan[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<Tab>('free');
 
   useEffect(() => {
-    api.get<LandingPlan[]>('/site/landing-plans').then((r) => {
-      if (r.data.length) setPlans(r.data);
-    }).catch(() => {});
+    api.get<{ coin: CoinPlan[]; real: RealPlan[] }>('/site/landing-plans').then((r) => {
+      setCoinPlans(r.data.coin || []);
+      setRealPlans(r.data.real || []);
+      // Default to whichever tab has plans
+      if ((r.data.coin || []).length === 0 && (r.data.real || []).length > 0) setTab('paid');
+    }).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
+  if (loading) {
+    return (
+      <section id="plans" className="relative py-16 sm:py-24">
+        <div className="flex items-center justify-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-[#ff7a18]" />
+        </div>
+      </section>
+    );
+  }
+
+  if (!coinPlans.length && !realPlans.length) return null;
+
+  const plans = tab === 'free' ? coinPlans : realPlans;
+
   return (
-    <section id="plans" className="relative py-24">
+    <section id="plans" className="relative py-16 sm:py-24">
       {/* Background glow */}
       <div className="pointer-events-none absolute inset-0 -z-10">
         <div className="absolute left-1/2 top-0 h-[500px] w-[800px] -translate-x-1/2 rounded-full bg-[#ff7a18]/[0.04] blur-[150px]" />
@@ -57,51 +101,103 @@ export function LandingPlans() {
             No hidden fees. Pick a plan and deploy in seconds.
           </p>
 
-          {/* Monthly indicator */}
-          <div className="mt-8 inline-flex items-center gap-3 rounded-full border border-gray-800 bg-[#161616] px-5 py-2 text-sm">
-            <span className="font-medium text-white">Monthly</span>
-            <span className="text-gray-500">billing</span>
-          </div>
+          {/* Tabs */}
+          {coinPlans.length > 0 && realPlans.length > 0 && (
+            <div className="mt-8 inline-flex items-center gap-1 rounded-full border border-gray-800 bg-[#161616] p-1">
+              <button
+                onClick={() => setTab('free')}
+                className={cn(
+                  'rounded-full px-5 py-2 text-sm font-medium transition-all',
+                  tab === 'free'
+                    ? 'bg-[#ff7a18] text-white shadow-lg shadow-[#ff7a18]/20'
+                    : 'text-gray-400 hover:text-white',
+                )}
+              >
+                Free (Coins)
+              </button>
+              <button
+                onClick={() => setTab('paid')}
+                className={cn(
+                  'rounded-full px-5 py-2 text-sm font-medium transition-all',
+                  tab === 'paid'
+                    ? 'bg-[#ff7a18] text-white shadow-lg shadow-[#ff7a18]/20'
+                    : 'text-gray-400 hover:text-white',
+                )}
+              >
+                Paid (INR)
+              </button>
+            </div>
+          )}
+
+          {/* Single type indicator */}
+          {coinPlans.length > 0 && realPlans.length === 0 && (
+            <div className="mt-8 inline-flex items-center gap-3 rounded-full border border-gray-800 bg-[#161616] px-5 py-2 text-sm">
+              <span className="font-medium text-white">Free Plans</span>
+              <span className="text-gray-500">Coin billing</span>
+            </div>
+          )}
+          {realPlans.length > 0 && coinPlans.length === 0 && (
+            <div className="mt-8 inline-flex items-center gap-3 rounded-full border border-gray-800 bg-[#161616] px-5 py-2 text-sm">
+              <span className="font-medium text-white">Paid Plans</span>
+              <span className="text-gray-500">INR billing</span>
+            </div>
+          )}
         </div>
 
         {/* Plan cards */}
-        <div className="mx-auto mt-12 grid max-w-5xl gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        <div className={`mx-auto mt-12 grid max-w-5xl gap-6 sm:grid-cols-2 ${
+          plans.length >= 3 ? 'lg:grid-cols-3' : ''
+        }`}>
           {plans.map((plan, i) => {
-            const featured = !!plan.tag || i === 1;
+            const featured = plans.length >= 3 ? i === Math.floor(plans.length / 2) : i === 0;
+            const isCoin = tab === 'free';
+            const coinPlan = plan as CoinPlan;
+            const isFreeStart = isCoin && coinPlan.initialPrice === 0;
+            const renewalCoins = isCoin ? (coinPlan.renewalPrice || coinPlan.coinPrice) : 0;
+
             return (
               <div
                 key={plan.id}
                 className={`group relative flex flex-col rounded-xl border p-6 transition-all duration-300 hover:-translate-y-1 ${
                   featured
-                    ? 'border-[#ff7a18]/40 bg-[#161616] shadow-lg shadow-[#ff7a18]/10 scale-[1.03]'
+                    ? 'border-[#ff7a18]/40 bg-[#161616] shadow-lg shadow-[#ff7a18]/10 sm:scale-[1.03]'
                     : 'border-gray-800 bg-[#161616] hover:border-gray-700 hover:shadow-lg'
                 }`}
               >
-                {plan.tag && (
+                {featured && (
                   <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-gradient-to-r from-[#ff7a18] to-orange-500 px-4 py-1 text-xs font-semibold text-white shadow-lg shadow-[#ff7a18]/25">
-                    {plan.tag}
+                    Most Popular
                   </span>
                 )}
 
                 <h3 className="text-xl font-bold text-white">{plan.name}</h3>
-                {plan.description && (
-                  <p className="mt-1 text-sm text-gray-400">{plan.description}</p>
-                )}
+                <p className="mt-1 text-sm text-gray-400 capitalize">{plan.category}</p>
 
                 <p className="mt-6">
-                  <span className="text-4xl font-extrabold tracking-tight text-white">${plan.priceUsd.toFixed(2)}</span>
-                  <span className="ml-1 text-base font-normal text-gray-500">/mo</span>
+                  <span className="text-2xl font-extrabold tracking-tight text-white sm:text-4xl">
+                    {isFreeStart ? 'Free' : isCoin ? `${coinPlan.initialPrice || coinPlan.coinPrice} Coins` : `₹${(plan as RealPlan).price.toFixed(2)}`}
+                  </span>
+                  <span className="ml-1 text-base font-normal text-gray-500">
+                    {isFreeStart ? 'to start' : durationLabel(plan.durationDays)}
+                  </span>
                 </p>
+                {isFreeStart && (
+                  <p className="mt-1 text-sm text-gray-500">
+                    then {renewalCoins} Coins{durationLabel(plan.durationDays)} after
+                  </p>
+                )}
 
                 <ul className="mt-6 space-y-3 text-sm text-gray-300">
                   {[
-                    `${fmtMB(plan.ram)} RAM`,
+                    `${fmtGB(plan.ram)} RAM`,
                     `${plan.cpu}% CPU`,
-                    `${fmtMB(plan.disk)} Disk`,
+                    `${fmtGB(plan.storage)} Disk`,
+                    plan.swap > 0 ? `${fmtGB(plan.swap)} Swap` : null,
+                    plan.backupCount > 0 ? `${plan.backupCount} Backup${plan.backupCount > 1 ? 's' : ''}` : null,
+                    plan.extraPorts > 0 ? `${plan.extraPorts} Extra Port${plan.extraPorts > 1 ? 's' : ''}` : null,
                     'DDoS Protection',
-                    'Automated Backups',
                     'Full Panel Access',
-                  ].map((item) => (
+                  ].filter(Boolean).map((item) => (
                     <li key={item} className="flex items-center gap-2.5">
                       <Check className="h-4 w-4 shrink-0 text-[#ff7a18]" />
                       {item}

@@ -6,12 +6,19 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { toast } from 'sonner';
-import { Settings, RefreshCw, Network, Globe, Copy } from 'lucide-react';
+import { Settings, RefreshCw, Network, Globe, Copy, HardDrive, Eye, EyeOff, RotateCw } from 'lucide-react';
 
 interface Props {
   serverId: number;
   server: any;
   onServerUpdate: (s: any) => void;
+}
+
+interface SftpDetails {
+  host: string;
+  port: number;
+  username: string;
+  password: string | null;
 }
 
 export function SettingsTab({ serverId, server, onServerUpdate }: Props) {
@@ -21,6 +28,12 @@ export function SettingsTab({ serverId, server, onServerUpdate }: Props) {
   const [reinstalling, setReinstalling] = useState(false);
   const [allocations, setAllocations] = useState<any[]>([]);
   const [loadingNetwork, setLoadingNetwork] = useState(true);
+
+  // SFTP
+  const [sftp, setSftp] = useState<SftpDetails | null>(null);
+  const [loadingSftp, setLoadingSftp] = useState(true);
+  const [showPassword, setShowPassword] = useState(false);
+  const [resettingPassword, setResettingPassword] = useState(false);
 
   // Subdomain
   const [subdomain, setSubdomain] = useState('');
@@ -32,6 +45,13 @@ export function SettingsTab({ serverId, server, onServerUpdate }: Props) {
     api.get(`/servers/${serverId}/manage/network`).then(({ data }) => {
       setAllocations(data);
     }).catch(() => {}).finally(() => setLoadingNetwork(false));
+  }, [serverId]);
+
+  // Load SFTP details
+  useEffect(() => {
+    api.get<SftpDetails>(`/servers/${serverId}/manage/sftp`).then(({ data }) => {
+      setSftp(data);
+    }).catch(() => {}).finally(() => setLoadingSftp(false));
   }, [serverId]);
 
   // Load current subdomain
@@ -110,6 +130,20 @@ export function SettingsTab({ serverId, server, onServerUpdate }: Props) {
     }
   };
 
+  const handleResetSftpPassword = async () => {
+    setResettingPassword(true);
+    try {
+      const { data } = await api.post<{ password: string }>(`/servers/${serverId}/manage/sftp/reset-password`);
+      setSftp((prev) => prev ? { ...prev, password: data.password } : prev);
+      setShowPassword(true);
+      toast.success('SFTP password has been reset');
+    } catch {
+      toast.error('Failed to reset SFTP password');
+    } finally {
+      setResettingPassword(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Connection Address */}
@@ -155,6 +189,90 @@ export function SettingsTab({ serverId, server, onServerUpdate }: Props) {
           </div>
         ) : (
           <p className="text-sm text-gray-500">No allocations found</p>
+        )}
+      </div>
+
+      {/* SFTP Connection */}
+      <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-5 space-y-3">
+        <div className="flex items-center gap-2">
+          <HardDrive className="h-5 w-5 text-[#ff7a18]" />
+          <h3 className="font-semibold">SFTP Connection</h3>
+        </div>
+        <p className="text-xs text-gray-500">
+          Use an SFTP client like <span className="font-semibold text-gray-400">FileZilla</span> or <span className="font-semibold text-gray-400">WinSCP</span> to upload large files like world folders.
+        </p>
+        {loadingSftp ? (
+          <div className="h-24 animate-pulse rounded-lg bg-white/5" />
+        ) : sftp ? (
+          <div className="space-y-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {[
+                { label: 'Host', value: sftp.host },
+                { label: 'Port', value: String(sftp.port) },
+                { label: 'Username', value: sftp.username },
+              ].map(({ label, value }) => (
+                <button
+                  key={label}
+                  onClick={() => { navigator.clipboard.writeText(value); toast.success(`${label} copied!`); }}
+                  className="flex items-center justify-between rounded-lg bg-white/[0.04] border border-white/[0.06] px-4 py-2.5 text-left transition-colors hover:bg-white/[0.08] group"
+                >
+                  <div>
+                    <p className="text-[10px] text-gray-500 uppercase tracking-wider">{label}</p>
+                    <p className="font-mono text-sm text-gray-200">{value}</p>
+                  </div>
+                  <Copy className="h-3.5 w-3.5 text-gray-600 group-hover:text-white transition-colors" />
+                </button>
+              ))}
+              <button
+                onClick={() => {
+                  if (sftp.password) {
+                    navigator.clipboard.writeText(sftp.password);
+                    toast.success('Password copied!');
+                  }
+                }}
+                className="flex items-center justify-between rounded-lg bg-white/[0.04] border border-white/[0.06] px-4 py-2.5 text-left transition-colors hover:bg-white/[0.08] group"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] text-gray-500 uppercase tracking-wider">Password</p>
+                  <p className="font-mono text-sm text-gray-200 truncate">
+                    {sftp.password
+                      ? showPassword ? sftp.password : '••••••••••••••'
+                      : <span className="text-gray-500 italic">Not set — reset below</span>
+                    }
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 ml-2 shrink-0">
+                  {sftp.password && (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => { e.stopPropagation(); setShowPassword(!showPassword); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setShowPassword(!showPassword); } }}
+                      className="p-0.5"
+                    >
+                      {showPassword
+                        ? <EyeOff className="h-3.5 w-3.5 text-gray-500 hover:text-white transition-colors" />
+                        : <Eye className="h-3.5 w-3.5 text-gray-500 hover:text-white transition-colors" />
+                      }
+                    </span>
+                  )}
+                  <Copy className="h-3.5 w-3.5 text-gray-600 group-hover:text-white transition-colors" />
+                </div>
+              </button>
+            </div>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="gap-2 mt-1"
+              onClick={handleResetSftpPassword}
+              disabled={resettingPassword}
+            >
+              <RotateCw className={`h-3.5 w-3.5 ${resettingPassword ? 'animate-spin' : ''}`} />
+              {resettingPassword ? 'Resetting…' : 'Reset SFTP Password'}
+            </Button>
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500">SFTP details unavailable for this server.</p>
         )}
       </div>
 

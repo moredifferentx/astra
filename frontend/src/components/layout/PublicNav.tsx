@@ -1,8 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Menu, X } from 'lucide-react';
+import Cookies from 'js-cookie';
 
 const navLinks = [
   { label: 'Features', href: '#features' },
@@ -14,6 +15,17 @@ const navLinks = [
 
 export function PublicNav() {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [loggedIn, setLoggedIn] = useState(false);
+
+  useEffect(() => {
+    const token = Cookies.get('auth_token');
+    if (token) {
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+        if (payload.exp * 1000 > Date.now()) setLoggedIn(true);
+      } catch {}
+    }
+  }, []);
 
   return (
     <nav className="sticky top-0 z-50 border-b border-gray-800/60 bg-black/60 backdrop-blur-md">
@@ -41,18 +53,29 @@ export function PublicNav() {
 
         {/* Right */}
         <div className="hidden items-center gap-3 md:flex">
-          <Link
-            href="/login"
-            className="rounded-lg px-4 py-2 text-sm text-gray-400 transition-colors hover:text-white"
-          >
-            Log In
-          </Link>
-          <Link
-            href="/login"
-            className="rounded-xl bg-[#ff7a18] px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-[#ff7a18]/20 transition-all duration-200 hover:bg-[#ff8c3a] hover:shadow-[#ff7a18]/40"
-          >
-            Dashboard
-          </Link>
+          {loggedIn ? (
+            <Link
+              href="/dashboard"
+              className="rounded-xl bg-[#ff7a18] px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-[#ff7a18]/20 transition-all duration-200 hover:bg-[#ff8c3a] hover:shadow-[#ff7a18]/40"
+            >
+              Dashboard
+            </Link>
+          ) : (
+            <>
+              <Link
+                href="/login"
+                className="rounded-lg px-4 py-2 text-sm text-gray-400 transition-colors hover:text-white"
+              >
+                Log In
+              </Link>
+              <Link
+                href="/login"
+                className="rounded-xl bg-[#ff7a18] px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-[#ff7a18]/20 transition-all duration-200 hover:bg-[#ff8c3a] hover:shadow-[#ff7a18]/40"
+              >
+                Get Started
+              </Link>
+            </>
+          )}
         </div>
 
         {/* Mobile toggle */}
@@ -79,12 +102,20 @@ export function PublicNav() {
               </Link>
             ))}
             <div className="flex gap-3 pt-4">
-              <Link href="/login" className="flex-1 rounded-xl border border-gray-700 py-2.5 text-center text-sm text-gray-300 transition-colors hover:bg-white/5">
-                Log In
-              </Link>
-              <Link href="/login" className="flex-1 rounded-xl bg-[#ff7a18] py-2.5 text-center text-sm font-semibold text-white shadow-lg shadow-[#ff7a18]/20">
-                Dashboard
-              </Link>
+              {loggedIn ? (
+                <Link href="/dashboard" className="flex-1 rounded-xl bg-[#ff7a18] py-2.5 text-center text-sm font-semibold text-white shadow-lg shadow-[#ff7a18]/20">
+                  Dashboard
+                </Link>
+              ) : (
+                <>
+                  <Link href="/login" className="flex-1 rounded-xl border border-gray-700 py-2.5 text-center text-sm text-gray-300 transition-colors hover:bg-white/5">
+                    Log In
+                  </Link>
+                  <Link href="/login" className="flex-1 rounded-xl bg-[#ff7a18] py-2.5 text-center text-sm font-semibold text-white shadow-lg shadow-[#ff7a18]/20">
+                    Get Started
+                  </Link>
+                </>
+              )}
             </div>
           </div>
         </div>

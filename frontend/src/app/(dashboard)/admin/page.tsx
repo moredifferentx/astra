@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
-import { Users, Server, DollarSign, AlertCircle, Ticket, Activity, Settings, Tag, Coins, FileText } from 'lucide-react';
+import { Users, Server, DollarSign, AlertCircle, Ticket, Activity, Settings, Tag, Coins, FileText, MessageSquare, Gift, Home, MonitorPlay } from 'lucide-react';
 
 interface Stats {
   totalUsers: number;
@@ -16,13 +16,19 @@ interface Stats {
 
 const NAV_LINKS = [
   { label: 'Users', href: '/admin/users', icon: Users, color: 'text-blue-400', bg: 'bg-blue-500/10' },
+  { label: 'Servers', href: '/admin/servers', icon: Server, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
   { label: 'Plans', href: '/admin/plans', icon: Tag, color: 'text-green-400', bg: 'bg-green-500/10' },
+  { label: 'Node Assignments', href: '/admin/nodes', icon: Activity, color: 'text-teal-400', bg: 'bg-teal-500/10' },
   { label: 'Coupons', href: '/admin/coupons', icon: Tag, color: 'text-purple-400', bg: 'bg-purple-500/10' },
   { label: 'UTR Submissions', href: '/admin/billing', icon: DollarSign, color: 'text-yellow-400', bg: 'bg-yellow-500/10' },
   { label: 'Tickets', href: '/admin/tickets', icon: Ticket, color: 'text-orange-400', bg: 'bg-orange-500/10' },
   { label: 'Audit Log', href: '/admin/audit', icon: FileText, color: 'text-gray-400', bg: 'bg-gray-500/10' },
+  { label: 'Homepage Editor', href: '/admin/homepage', icon: Home, color: 'text-indigo-400', bg: 'bg-indigo-500/10' },
   { label: 'Site Settings', href: '/admin/site', icon: Settings, color: 'text-[#ff7a18]', bg: 'bg-[#ff7a18]/10' },
   { label: 'Coin Settings', href: '/admin/coins', icon: Coins, color: 'text-amber-400', bg: 'bg-amber-500/10' },
+  { label: 'Popup Messages', href: '/admin/popups', icon: MessageSquare, color: 'text-pink-400', bg: 'bg-pink-500/10' },
+  { label: 'Affiliate Settings', href: '/admin/affiliate', icon: Gift, color: 'text-cyan-400', bg: 'bg-cyan-500/10' },
+  { label: 'Ad Settings', href: '/admin/ads', icon: MonitorPlay, color: 'text-rose-400', bg: 'bg-rose-500/10' },
 ];
 
 export default function AdminDashboardPage() {
@@ -37,7 +43,7 @@ export default function AdminDashboardPage() {
         { label: 'Users', value: stats.totalUsers, icon: Users, color: 'text-blue-400', bg: 'bg-blue-500/10' },
         { label: 'Servers', value: stats.totalServers, icon: Server, color: 'text-green-400', bg: 'bg-green-500/10' },
         { label: 'Active Servers', value: stats.activeServers, icon: Activity, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
-        { label: 'Revenue', value: `$${(stats.totalRevenue ?? 0).toFixed(2)}`, icon: DollarSign, color: 'text-yellow-400', bg: 'bg-yellow-500/10' },
+        { label: 'Revenue', value: `₹${(stats.totalRevenue ?? 0).toFixed(2)}`, icon: DollarSign, color: 'text-yellow-400', bg: 'bg-yellow-500/10' },
         { label: 'Pending UTRs', value: stats.pendingUtrs, icon: AlertCircle, color: 'text-orange-400', bg: 'bg-orange-500/10', warn: stats.pendingUtrs > 0 },
         { label: 'Open Tickets', value: stats.openTickets, icon: Ticket, color: 'text-red-400', bg: 'bg-red-500/10', warn: stats.openTickets > 0 },
       ]

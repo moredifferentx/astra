@@ -11,19 +11,19 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 interface Coupon {
   id: number;
   code: string;
-  discountPercent: number | null;
-  discountCoins: number | null;
-  maxUses: number | null;
-  usedCount: number;
-  expiresAt: string | null;
-  isActive: boolean;
+  coinReward: number;
+  maxUses: number;
+  perUserLimit: number;
+  expiresAt: string;
+  active: boolean;
+  _count?: { redemptions: number };
 }
 
 interface FormValues {
   code: string;
-  discountPercent: string;
-  discountCoins: string;
+  coinReward: string;
   maxUses: string;
+  perUserLimit: string;
   expiresAt: string;
 }
 
@@ -41,18 +41,18 @@ export default function AdminCouponsPage() {
     try {
       const payload = {
         code: data.code,
-        discountPercent: data.discountPercent ? Number(data.discountPercent) : null,
-        discountCoins: data.discountCoins ? Number(data.discountCoins) : null,
-        maxUses: data.maxUses ? Number(data.maxUses) : null,
-        expiresAt: data.expiresAt || null,
+        coinReward: Number(data.coinReward),
+        maxUses: Number(data.maxUses),
+        perUserLimit: Number(data.perUserLimit),
+        expiresAt: new Date(data.expiresAt).toISOString(),
       };
       const r = await api.post<Coupon>('/admin/coupons', payload);
       setCoupons((prev) => [r.data, ...prev]);
-      toast.success('Coupon created');
+      toast.success('Redeem code created');
       setCreating(false);
       reset();
     } catch {
-      toast.error('Failed to create coupon');
+      toast.error('Failed to create redeem code');
     }
   }
 
@@ -60,7 +60,7 @@ export default function AdminCouponsPage() {
     try {
       await api.delete(`/admin/coupons/${id}`);
       setCoupons((prev) => prev.filter((c) => c.id !== id));
-      toast.success('Coupon deleted');
+      toast.success('Redeem code deleted');
     } catch {
       toast.error('Failed to delete');
     } finally {
@@ -71,19 +71,19 @@ export default function AdminCouponsPage() {
   return (
     <div className="space-y-8 py-8">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Coupons</h1>
+        <h1 className="text-2xl font-bold">Redeem Codes</h1>
         <Button size="sm" onClick={() => { setCreating(!creating); reset(); }}>
-          {creating ? 'Cancel' : '+ New Coupon'}
+          {creating ? 'Cancel' : '+ New Code'}
         </Button>
       </div>
 
       {creating && (
         <form onSubmit={handleSubmit(onSubmit)} className="grid gap-4 rounded-2xl border border-white/10 bg-white/5 p-6 sm:grid-cols-2">
-          <Input label="Code" placeholder="SUMMER20" {...register('code', { required: true })} />
-          <Input label="Discount %" type="number" placeholder="e.g. 20" {...register('discountPercent')} />
-          <Input label="Discount Coins" type="number" placeholder="e.g. 500" {...register('discountCoins')} />
-          <Input label="Max Uses (blank = unlimited)" type="number" {...register('maxUses')} />
-          <Input label="Expires At (optional)" type="datetime-local" {...register('expiresAt')} />
+          <Input label="Code" placeholder="FREECOINS100" {...register('code', { required: true })} />
+          <Input label="Coin Reward" type="number" placeholder="e.g. 500" {...register('coinReward', { required: true })} />
+          <Input label="Max Uses" type="number" placeholder="e.g. 100" {...register('maxUses', { required: true })} />
+          <Input label="Per User Limit" type="number" placeholder="e.g. 1" {...register('perUserLimit', { required: true })} />
+          <Input label="Expires At" type="datetime-local" {...register('expiresAt', { required: true })} />
           <div className="col-span-2">
             <Button type="submit">Create</Button>
           </div>
@@ -95,9 +95,9 @@ export default function AdminCouponsPage() {
           <thead className="border-b border-white/10 text-left text-xs text-gray-400">
             <tr>
               <th className="px-4 py-3">Code</th>
-              <th className="px-4 py-3">Discount %</th>
-              <th className="px-4 py-3">Discount Coins</th>
-              <th className="px-4 py-3">Uses</th>
+              <th className="px-4 py-3">Coin Reward</th>
+              <th className="px-4 py-3">Per User Limit</th>
+              <th className="px-4 py-3">Redeemed</th>
               <th className="px-4 py-3">Max Uses</th>
               <th className="px-4 py-3">Expires</th>
               <th className="px-4 py-3">Active</th>
@@ -108,15 +108,15 @@ export default function AdminCouponsPage() {
             {coupons.map((c) => (
               <tr key={c.id} className="hover:bg-white/5">
                 <td className="px-4 py-3 font-mono font-semibold">{c.code}</td>
-                <td className="px-4 py-3">{c.discountPercent ?? '—'}</td>
-                <td className="px-4 py-3">{c.discountCoins ?? '—'}</td>
-                <td className="px-4 py-3">{c.usedCount}</td>
-                <td className="px-4 py-3">{c.maxUses ?? '∞'}</td>
+                <td className="px-4 py-3">{c.coinReward}</td>
+                <td className="px-4 py-3">{c.perUserLimit}</td>
+                <td className="px-4 py-3">{c._count?.redemptions ?? 0}</td>
+                <td className="px-4 py-3">{c.maxUses}</td>
                 <td className="px-4 py-3 text-xs text-gray-400">
-                  {c.expiresAt ? new Date(c.expiresAt).toLocaleDateString() : '—'}
+                  {new Date(c.expiresAt).toLocaleDateString()}
                 </td>
                 <td className="px-4 py-3">
-                  <span className={c.isActive ? 'text-green-400' : 'text-gray-400'}>{c.isActive ? 'Yes' : 'No'}</span>
+                  <span className={c.active ? 'text-green-400' : 'text-gray-400'}>{c.active ? 'Yes' : 'No'}</span>
                 </td>
                 <td className="px-4 py-3">
                   <Button size="sm" variant="destructive" onClick={() => setDeleteTarget(c.id)}>Delete</Button>
@@ -131,8 +131,8 @@ export default function AdminCouponsPage() {
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
         onConfirm={() => deleteTarget && deleteCoupon(deleteTarget)}
-        title="Delete Coupon"
-        message="Are you sure you want to delete this coupon?"
+        title="Delete Redeem Code"
+        message="Are you sure you want to delete this redeem code?"
         confirmLabel="Delete"
         confirmVariant="destructive"
       />

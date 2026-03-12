@@ -27,6 +27,12 @@ export class PterodactylService {
   private serverInfoCache = new Map<number, { uuid: string; node: number; ts: number }>();
   private readonly SERVER_CACHE_TTL = 10 * 60 * 1000; // 10 min
 
+  // ── Circuit breaker state ────────────────────────────────────────────────
+  private circuitFailures = 0;
+  private circuitOpenedAt: number | null = null;
+  private readonly CIRCUIT_THRESHOLD = 5;
+  private readonly CIRCUIT_RESET_MS = 30_000; // 30s
+
   constructor(private config: ConfigService) {
     this.pteroUrl = config.get<string>('app.pterodactyl.url')!.replace(/\/$/, '');
     const apiKey = config.get<string>('app.pterodactyl.apiKey')!;
@@ -42,15 +48,53 @@ export class PterodactylService {
     });
   }
 
+  // ── Circuit breaker ─────────────────────────────────────────────────────────
+
+  private checkCircuit(): void {
+    if (this.circuitOpenedAt) {
+      if (Date.now() - this.circuitOpenedAt > this.CIRCUIT_RESET_MS) {
+        this.logger.warn('Circuit breaker: half-open, allowing request through');
+        this.circuitOpenedAt = null;
+        this.circuitFailures = 0;
+      } else {
+        throw new ServiceUnavailableException(
+          'Pterodactyl panel is temporarily unavailable. Please try again shortly.',
+        );
+      }
+    }
+  }
+
+  private recordSuccess(): void {
+    this.circuitFailures = 0;
+    this.circuitOpenedAt = null;
+  }
+
+  private recordFailure(): void {
+    this.circuitFailures++;
+    if (this.circuitFailures >= this.CIRCUIT_THRESHOLD) {
+      this.circuitOpenedAt = Date.now();
+      this.logger.error(
+        `Circuit breaker OPEN after ${this.circuitFailures} consecutive failures. ` +
+        `Will retry after ${this.CIRCUIT_RESET_MS / 1000}s.`,
+      );
+    }
+  }
+
   // ── Retry wrapper ───────────────────────────────────────────────────────────
 
   private async withRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+    this.checkCircuit();
     for (let i = 1; i <= attempts; i++) {
       try {
-        return await fn();
+        const result = await fn();
+        this.recordSuccess();
+        return result;
       } catch (err) {
         const shouldRetry = !err.response || RETRY_STATUS.has(err.response?.status);
-        if (!shouldRetry || i === attempts) throw err;
+        if (!shouldRetry || i === attempts) {
+          this.recordFailure();
+          throw err;
+        }
         await new Promise((r) => setTimeout(r, 300 * i));
       }
     }
@@ -75,6 +119,42 @@ export class PterodactylService {
       }),
     );
     return res.data.attributes.id;
+  }
+
+  async getUser(pterodactylUserId: number): Promise<{ id: number; username: string; email: string }> {
+    const res = await this.withRetry(() => this.api.get(`/users/${pterodactylUserId}`));
+    const attr = res.data.attributes;
+    return { id: attr.id, username: attr.username, email: attr.email };
+  }
+
+  async updateUserPassword(pterodactylUserId: number, password: string): Promise<void> {
+    // Pterodactyl requires email + username when updating a user.
+    const user = await this.getUser(pterodactylUserId);
+    await this.withRetry(() =>
+      this.api.patch(`/users/${pterodactylUserId}`, {
+        email: user.email,
+        username: user.username,
+        first_name: user.username,
+        last_name: 'User',
+        password,
+      }),
+    );
+  }
+
+  async getNodeSftpPort(nodeId: number): Promise<number> {
+    try {
+      const cfgRes = await this.withRetry(() =>
+        this.api.get(`/nodes/${nodeId}/configuration`),
+      );
+      return cfgRes.data?.system?.sftp?.bind_port || 2022;
+    } catch {
+      return 2022;
+    }
+  }
+
+  async getNodeDaemonPublic(nodeId: number): Promise<{ fqdn: string }> {
+    const nodeRes = await this.withRetry(() => this.api.get(`/nodes/${nodeId}`));
+    return { fqdn: nodeRes.data.attributes.fqdn };
   }
 
   async getUserByEmail(email: string): Promise<number | null> {
@@ -167,11 +247,14 @@ export class PterodactylService {
     return res.data.attributes;
   }
 
-  async selectBestNode(locationId?: number): Promise<{ nodeId: number; allocationId: number }> {
+  async selectBestNode(locationId?: number, allowedNodeIds?: number[]): Promise<{ nodeId: number; allocationId: number }> {
     const nodes = await this.getNodes();
-    const filtered = locationId
+    let filtered = locationId
       ? nodes.filter((n: any) => n.attributes.location_id === locationId)
       : nodes;
+    if (allowedNodeIds && allowedNodeIds.length > 0) {
+      filtered = filtered.filter((n: any) => allowedNodeIds.includes(n.attributes.id));
+    }
 
     let best: any = null;
     let bestScore = -1;

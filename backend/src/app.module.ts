@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
@@ -19,6 +20,10 @@ import { PterodactylModule } from './pterodactyl/pterodactyl.module';
 import { CronModule } from './cron/cron.module';
 import { HealthModule } from './health/health.module';
 import { DnsModule } from './dns/dns.module';
+import { AffiliateModule } from './affiliate/affiliate.module';
+import { DiscordBotModule } from './discord-bot/discord-bot.module';
+import { RepositoriesModule } from './repositories/repositories.module';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import envConfig from './config/env.config';
 
 @Module({
@@ -35,8 +40,10 @@ import envConfig from './config/env.config';
       },
     ]),
     ScheduleModule.forRoot(),
+    EventEmitterModule.forRoot(),
     PrismaModule,
     RedisModule,
+    RepositoriesModule,
     PterodactylModule,
     DnsModule,
     AuthModule,
@@ -52,6 +59,14 @@ import envConfig from './config/env.config';
     BackupsModule,
     CronModule,
     HealthModule,
+    AffiliateModule,
+    DiscordBotModule,
+  ],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
   ],
 })
 export class AppModule {}

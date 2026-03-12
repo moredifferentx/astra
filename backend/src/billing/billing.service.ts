@@ -1,10 +1,15 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UtrStatus } from '@prisma/client';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { BILLING_UTR_SUBMITTED } from '../events/events';
 
 @Injectable()
 export class BillingService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private eventEmitter: EventEmitter2,
+  ) {}
 
   async getUpiDetails() {
     return {
@@ -14,9 +19,21 @@ export class BillingService {
   }
 
   async submitUtr(userId: number, amount: number, utrNumber: string, screenshotPath: string) {
-    return this.prisma.utrSubmission.create({
+    const submission = await this.prisma.utrSubmission.create({
       data: { userId, amount, utrNumber, screenshotPath, status: UtrStatus.pending },
+      include: { user: { select: { email: true } } },
     });
+
+    // Emit event for notifications (decoupled from Discord)
+    this.eventEmitter.emit(BILLING_UTR_SUBMITTED, {
+      id: submission.id,
+      amount: submission.amount,
+      utrNumber: submission.utrNumber,
+      screenshotPath: submission.screenshotPath,
+      user: submission.user,
+    });
+
+    return submission;
   }
 
   async getUserSubmissions(userId: number) {

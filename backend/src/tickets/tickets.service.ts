@@ -2,6 +2,8 @@ import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/commo
 import { PrismaService } from '../prisma/prisma.service';
 import { TicketStatus, TicketPriority } from '@prisma/client';
 import { IsString, MinLength, MaxLength, IsEnum, IsOptional } from 'class-validator';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { TICKET_CREATED, TICKET_REPLIED } from '../events/events';
 
 export class CreateTicketDto {
   @IsString() @MinLength(5) @MaxLength(120) subject: string;
@@ -15,7 +17,10 @@ export class ReplyTicketDto {
 
 @Injectable()
 export class TicketsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private eventEmitter: EventEmitter2,
+  ) {}
 
   async getUserTickets(userId: number) {
     return this.prisma.ticket.findMany({
@@ -30,7 +35,12 @@ export class TicketsService {
   async getTicket(ticketId: number, userId: number) {
     const ticket = await this.prisma.ticket.findUnique({
       where: { id: ticketId },
-      include: { messages: { orderBy: { createdAt: 'asc' } } },
+      include: {
+        messages: {
+          orderBy: { createdAt: 'asc' },
+          include: { user: { select: { email: true } } },
+        },
+      },
     });
     if (!ticket) throw new NotFoundException('Ticket not found');
     if (ticket.userId !== userId) throw new ForbiddenException();
@@ -38,27 +48,55 @@ export class TicketsService {
   }
 
   async create(userId: number, dto: CreateTicketDto) {
-    return this.prisma.$transaction(async (tx) => {
-      const ticket = await tx.ticket.create({
+    const ticket = await this.prisma.$transaction(async (tx) => {
+      const t = await tx.ticket.create({
         data: { userId, subject: dto.subject, priority: dto.priority || TicketPriority.medium },
+        include: { user: { select: { email: true } } },
       });
       await tx.ticketMessage.create({
-        data: { ticketId: ticket.id, userId, message: dto.message },
+        data: { ticketId: t.id, userId, message: dto.message },
       });
-      return ticket;
+      return t;
     });
+
+    // Emit event for notifications (decoupled from Discord)
+    this.eventEmitter.emit(TICKET_CREATED, {
+      type: 'new',
+      id: ticket.id,
+      subject: ticket.subject,
+      priority: ticket.priority,
+      user: ticket.user,
+      message: dto.message,
+    });
+
+    return ticket;
   }
 
   async reply(ticketId: number, userId: number, dto: ReplyTicketDto) {
-    const ticket = await this.prisma.ticket.findUnique({ where: { id: ticketId } });
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { id: ticketId },
+      include: { user: { select: { email: true } } },
+    });
     if (!ticket) throw new NotFoundException('Ticket not found');
     if (ticket.userId !== userId) throw new ForbiddenException();
     if (ticket.status === TicketStatus.closed) throw new ForbiddenException('Ticket is closed');
+    if (ticket.status === TicketStatus.resolved) throw new ForbiddenException('Ticket is resolved');
 
     const message = await this.prisma.ticketMessage.create({
       data: { ticketId, userId, message: dto.message },
     });
     await this.prisma.ticket.update({ where: { id: ticketId }, data: { status: TicketStatus.open } });
+
+    // Emit event for notifications (decoupled from Discord)
+    this.eventEmitter.emit(TICKET_REPLIED, {
+      type: 'reply',
+      id: ticket.id,
+      subject: ticket.subject,
+      priority: ticket.priority,
+      user: ticket.user,
+      message: dto.message,
+    });
+
     return message;
   }
 

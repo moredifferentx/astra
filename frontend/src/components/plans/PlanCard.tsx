@@ -91,8 +91,8 @@ export function PlanCard({ plan, planType, onPurchase, purchasing }: PlanCardPro
           </div>
         ) : (
           <p className="text-3xl font-extrabold tracking-tight">
-            ${(plan as RealPlan).price.toFixed(2)}
-            <span className="ml-1 text-sm font-normal text-gray-500">USD</span>
+            ₹{(plan as RealPlan).price.toFixed(2)}
+            <span className="ml-1 text-sm font-normal text-gray-500">INR</span>
             <span className="ml-2 text-sm font-normal text-gray-500">/ {plan.durationDays}d</span>
           </p>
         )}

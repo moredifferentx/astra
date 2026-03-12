@@ -256,7 +256,7 @@ export default function AdminPlansPage() {
               tab === t ? 'bg-[#ff7a18] text-white' : 'text-gray-400 hover:text-white',
             )}
           >
-            {t === 'coin' ? 'Coin Plans' : 'Real Plans (USD)'}
+            {t === 'coin' ? 'Coin Plans' : 'Real Plans (INR)'}
           </button>
         ))}
       </div>
@@ -391,7 +391,7 @@ export default function AdminPlansPage() {
                 <option value="bot">Bot / Discord</option>
               </select>
             </Field>
-            <Input label="Price (USD)" type="number" min={0} step={0.01} value={realForm.price} onChange={(e) => setRealForm((f) => ({ ...f, price: +e.target.value }))} />
+            <Input label="Price (INR)" type="number" min={0} step={0.01} value={realForm.price} onChange={(e) => setRealForm((f) => ({ ...f, price: +e.target.value }))} />
             <Field label="Duration Type">
               <select className={sel} value={realForm.durationType} onChange={(e) => setRealForm((f) => ({ ...f, durationType: e.target.value }))}>
                 <option value="weekly">Weekly</option>
@@ -525,7 +525,7 @@ export default function AdminPlansPage() {
                   </div>
 
                   <div className="flex items-baseline gap-2">
-                    <span className="text-2xl font-bold text-green-400">${p.price.toFixed(2)}</span>
+                    <span className="text-2xl font-bold text-green-400">₹{p.price.toFixed(2)}</span>
                     <span className="text-xs text-gray-500">/ {p.durationDays}d</span>
                   </div>
 

@@ -38,7 +38,7 @@ export default function DashboardPage() {
         {[
           { label: 'Active Servers', value: servers.filter(s => s.status === 'active').length, icon: Server, color: 'text-green-400', bg: 'bg-green-500/10' },
           { label: 'Coin Balance', value: user?.coins ?? 0, icon: Coins, color: 'text-yellow-400', bg: 'bg-yellow-500/10' },
-          { label: 'Balance', value: `$${(user?.balance ?? 0).toFixed(2)}`, icon: CreditCard, color: 'text-blue-400', bg: 'bg-blue-500/10' },
+          { label: 'Balance', value: `₹${(user?.balance ?? 0).toFixed(2)}`, icon: CreditCard, color: 'text-blue-400', bg: 'bg-blue-500/10' },
           { label: 'Total Servers', value: servers.length, icon: BarChart3, color: 'text-purple-400', bg: 'bg-purple-500/10' },
         ].map((stat) => (
           <div key={stat.label} className="rounded-2xl border border-gray-800 bg-[#161616] p-5">

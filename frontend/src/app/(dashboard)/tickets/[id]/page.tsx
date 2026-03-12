@@ -14,9 +14,9 @@ import { useAuth } from '@/context/auth-context';
 interface Message {
   id: number;
   message: string;
-  isStaff: boolean;
+  isAdmin: boolean;
   createdAt: string;
-  author?: { email: string };
+  user?: { email: string };
 }
 
 interface TicketDetail {
@@ -76,14 +76,26 @@ export default function TicketDetailPage() {
     return <div className="py-12 text-center text-sm text-gray-400">Loading…</div>;
   }
 
+  const isClosed = ticket.status === 'closed' || ticket.status === 'resolved';
+
+  const statusStyle: Record<string, string> = {
+    open: 'text-green-400',
+    in_progress: 'text-blue-400',
+    resolved: 'text-purple-400',
+    closed: 'text-gray-400',
+  };
+
   return (
     <div className="mx-auto max-w-3xl space-y-6 py-8">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">{ticket.subject}</h1>
-          <p className="mt-1 text-sm text-gray-400">Ticket #{ticket.id} · {ticket.status}</p>
+          <p className="mt-1 text-sm text-gray-400">
+            Ticket #{ticket.id} ·{' '}
+            <span className={statusStyle[ticket.status] || 'text-gray-400'}>{ticket.status.replace('_', ' ')}</span>
+          </p>
         </div>
-        {ticket.status === 'open' && (
+        {!isClosed && (
           <Button size="sm" variant="secondary" onClick={() => setShowCloseConfirm(true)}>
             Close Ticket
           </Button>
@@ -92,13 +104,13 @@ export default function TicketDetailPage() {
 
       <div className="space-y-4">
         {ticket.messages.map((msg) => {
-          const isMe = !msg.isStaff;
+          const isMe = !msg.isAdmin;
           return (
             <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-xl rounded-2xl px-4 py-3 text-sm ${isMe ? 'bg-[#ff7a18] text-white' : 'bg-white/10 text-gray-100'}`}>
-                {msg.isStaff && (
-                  <p className="mb-1 text-xs font-semibold text-orange-300">Support</p>
-                )}
+                <p className="mb-1 text-xs font-semibold opacity-70">
+                  {msg.isAdmin ? '🛡️ Support' : msg.user?.email || 'You'}
+                </p>
                 <p className="whitespace-pre-wrap">{msg.message}</p>
                 <p className="mt-1 text-right text-xs opacity-60">
                   {new Date(msg.createdAt).toLocaleString()}
@@ -109,7 +121,7 @@ export default function TicketDetailPage() {
         })}
       </div>
 
-      {ticket.status === 'open' && (
+      {!isClosed && (
         <form onSubmit={handleSubmit(onSubmit)} className="flex gap-3">
           <div className="flex-1">
             <textarea

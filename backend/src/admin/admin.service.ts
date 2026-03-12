@@ -1,33 +1,18 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { UtrStatus, ServerStatus, TicketStatus } from '@prisma/client';
+import { PterodactylService } from '../pterodactyl/pterodactyl.service';
+import { UtrStatus, ServerStatus, TicketStatus, PlanType } from '@prisma/client';
 
 @Injectable()
 export class AdminService {
-  constructor(private prisma: PrismaService) {}
-
-  // ── Dashboard stats ─────────────────────────────────────────────────────────
-
-  async getDashboardStats() {
-    const [totalUsers, totalServers, activeServers, openTickets, pendingUtrs] = await this.prisma.$transaction([
-      this.prisma.user.count(),
-      this.prisma.server.count(),
-      this.prisma.server.count({ where: { status: ServerStatus.active } }),
-      this.prisma.ticket.count({ where: { status: TicketStatus.open } }),
-      this.prisma.utrSubmission.count({ where: { status: UtrStatus.pending } }),
-    ]);
-    // Sum approved UTR amounts as revenue
-    const revenueResult = await this.prisma.utrSubmission.aggregate({
-      where: { status: UtrStatus.approved },
-      _sum: { amount: true },
-    });
-    const totalRevenue = revenueResult._sum.amount ?? 0;
-    return { totalUsers, totalServers, activeServers, openTickets, pendingUtrs, totalRevenue };
-  }
+  constructor(
+    private prisma: PrismaService,
+    private pterodactyl: PterodactylService,
+  ) {}
 
   // ── Users ───────────────────────────────────────────────────────────────────
 
-  async getUsers(page = 1, limit = 20, search?: string) {
+  async getUsers(page = 1, limit = 30, search?: string) {
     const skip = (page - 1) * limit;
     const where = search
       ? { email: { contains: search, mode: 'insensitive' as const } }
@@ -41,6 +26,8 @@ export class AdminService {
         select: {
           id: true, email: true, role: true, coins: true, balance: true,
           flagged: true, pterodactylUserId: true, createdAt: true, oauthProvider: true,
+          ipAddress: true, lastLoginIp: true,
+          _count: { select: { servers: true } },
         },
       }),
       this.prisma.user.count({ where }),
@@ -50,6 +37,182 @@ export class AdminService {
 
   async updateUser(userId: number, data: { coins?: number; balance?: number; role?: string; flagged?: boolean }) {
     return this.prisma.user.update({ where: { id: userId }, data: data as any });
+  }
+
+  async deleteUser(userId: number) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, pterodactylUserId: true, servers: { where: { status: { not: ServerStatus.deleted } }, select: { id: true, pterodactylServerId: true } } },
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    // Delete all user's servers from Pterodactyl
+    for (const server of user.servers) {
+      if (server.pterodactylServerId) {
+        await this.pterodactyl.deleteServer(server.pterodactylServerId).catch(() => {});
+      }
+      await this.prisma.server.update({ where: { id: server.id }, data: { status: ServerStatus.deleted } });
+    }
+
+    // Delete user from Pterodactyl panel
+    if (user.pterodactylUserId) {
+      await this.pterodactyl.deleteUser(user.pterodactylUserId).catch(() => {});
+    }
+
+    // Delete user from database
+    await this.prisma.user.delete({ where: { id: userId } });
+    return { message: 'User deleted' };
+  }
+
+  async getUserServers(userId: number) {
+    return this.prisma.server.findMany({
+      where: { userId, status: { not: ServerStatus.deleted } },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        planCoin: { select: { name: true, ram: true, cpu: true, storage: true } },
+        planReal: { select: { name: true, ram: true, cpu: true, storage: true } },
+      },
+    });
+  }
+
+  // ── Admin Servers ───────────────────────────────────────────────────────────
+
+  async getAdminServers(page = 1, limit = 30, search?: string) {
+    const skip = (page - 1) * limit;
+    const where: any = { status: { not: ServerStatus.deleted } };
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { user: { email: { contains: search, mode: 'insensitive' } } },
+      ];
+    }
+    const [servers, total] = await this.prisma.$transaction([
+      this.prisma.server.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          user: { select: { email: true } },
+          planCoin: { select: { name: true } },
+          planReal: { select: { name: true } },
+        },
+      }),
+      this.prisma.server.count({ where }),
+    ]);
+    return { servers, pagination: { page, limit, total, pages: Math.ceil(total / limit) } };
+  }
+
+  async adminGetServer(serverId: number) {
+    const server = await this.prisma.server.findUnique({
+      where: { id: serverId },
+      include: {
+        user: { select: { id: true, email: true } },
+        planCoin: true,
+        planReal: true,
+      },
+    });
+    if (!server) throw new NotFoundException('Server not found');
+    return server;
+  }
+
+  async adminSuspendServer(serverId: number) {
+    const server = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!server) throw new NotFoundException('Server not found');
+    if (server.pterodactylServerId) {
+      await this.pterodactyl.suspendServer(server.pterodactylServerId);
+    }
+    return this.prisma.server.update({
+      where: { id: serverId },
+      data: { status: ServerStatus.suspended, suspendedAt: new Date() },
+    });
+  }
+
+  async adminUnsuspendServer(serverId: number) {
+    const server = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!server) throw new NotFoundException('Server not found');
+    if (server.pterodactylServerId) {
+      await this.pterodactyl.unsuspendServer(server.pterodactylServerId);
+    }
+    return this.prisma.server.update({
+      where: { id: serverId },
+      data: { status: ServerStatus.active, suspendedAt: null },
+    });
+  }
+
+  async adminDeleteServer(serverId: number) {
+    const server = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!server) throw new NotFoundException('Server not found');
+    if (server.pterodactylServerId) {
+      await this.pterodactyl.deleteServer(server.pterodactylServerId).catch(() => {});
+    }
+    await this.prisma.server.update({
+      where: { id: serverId },
+      data: { status: ServerStatus.deleted },
+    });
+    return { message: 'Server deleted' };
+  }
+
+  async syncServersWithPterodactyl() {
+    const servers = await this.prisma.server.findMany({
+      where: { status: { not: ServerStatus.deleted }, pterodactylServerId: { not: null } },
+      select: { id: true, pterodactylServerId: true, name: true },
+    });
+
+    let synced = 0;
+    for (const server of servers) {
+      try {
+        await this.pterodactyl.getServerDetails(server.pterodactylServerId!);
+      } catch (err: any) {
+        if (err?.response?.status === 404) {
+          await this.prisma.server.update({
+            where: { id: server.id },
+            data: { status: ServerStatus.deleted },
+          });
+          synced++;
+        }
+      }
+    }
+    return { message: `Sync complete. ${synced} orphaned server(s) removed.`, removed: synced };
+  }
+
+  // ── Node Allocation ─────────────────────────────────────────────────────────
+
+  async getNodeAllocations(planType: string, planId: number) {
+    const where = planType === 'coin'
+      ? { planType: PlanType.coin, planCoinId: planId }
+      : { planType: PlanType.real, planRealId: planId };
+    return this.prisma.planNodeAllocation.findMany({ where });
+  }
+
+  async setNodeAllocations(planType: string, planId: number, nodes: { nodeId: number; nodeName?: string }[]) {
+    const type = planType === 'coin' ? PlanType.coin : PlanType.real;
+    const where = planType === 'coin'
+      ? { planType: type, planCoinId: planId }
+      : { planType: type, planRealId: planId };
+
+    // Delete existing allocations
+    await this.prisma.planNodeAllocation.deleteMany({ where });
+
+    // Create new allocations
+    if (nodes.length > 0) {
+      await this.prisma.planNodeAllocation.createMany({
+        data: nodes.map((n) => ({
+          planType: type,
+          planCoinId: planType === 'coin' ? planId : null,
+          planRealId: planType === 'real' ? planId : null,
+          nodeId: n.nodeId,
+          nodeName: n.nodeName || '',
+        })),
+      });
+    }
+    return { message: 'Node allocations updated' };
+  }
+
+  async getAllNodeAllocations() {
+    return this.prisma.planNodeAllocation.findMany({
+      orderBy: [{ planType: 'asc' }, { planCoinId: 'asc' }, { planRealId: 'asc' }],
+    });
   }
 
   // ── Plans ───────────────────────────────────────────────────────────────────
@@ -81,11 +244,17 @@ export class AdminService {
   // ── Coupons ─────────────────────────────────────────────────────────────────
 
   async getCoupons() {
-    return this.prisma.coupon.findMany({ orderBy: { id: 'desc' } });
+    return this.prisma.coupon.findMany({
+      orderBy: { id: 'desc' },
+      include: { _count: { select: { redemptions: true } } },
+    });
   }
 
   async createCoupon(data: any) {
-    return this.prisma.coupon.create({ data });
+    const { code, coinReward, maxUses, perUserLimit, expiresAt } = data;
+    return this.prisma.coupon.create({
+      data: { code, coinReward, maxUses, perUserLimit, expiresAt: new Date(expiresAt) },
+    });
   }
 
   async updateCoupon(id: number, data: any) {
@@ -144,6 +313,17 @@ export class AdminService {
     return this.prisma.ticket.update({ where: { id: ticketId }, data: { status: TicketStatus.closed } });
   }
 
+  async updateTicketStatus(ticketId: number, status: string) {
+    const validStatuses = ['open', 'in_progress', 'resolved', 'closed'];
+    if (!validStatuses.includes(status)) {
+      throw new BadRequestException('Invalid status');
+    }
+    return this.prisma.ticket.update({
+      where: { id: ticketId },
+      data: { status: status as TicketStatus },
+    });
+  }
+
   // ── UTR Submissions ─────────────────────────────────────────────────────────
 
   async getUtrSubmissions(status?: string) {
@@ -170,28 +350,6 @@ export class AdminService {
     });
   }
 
-  // ── Audit Log ───────────────────────────────────────────────────────────────
-
-  async logAction(adminId: number, action: string, targetType?: string, targetId?: number, details?: string, ip?: string) {
-    return this.prisma.auditLog.create({
-      data: { adminId, action, targetType, targetId, details, ipAddress: ip },
-    });
-  }
-
-  async getAuditLog(page = 1, limit = 50) {
-    const skip = (page - 1) * limit;
-    const [logs, total] = await this.prisma.$transaction([
-      this.prisma.auditLog.findMany({
-        skip,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-        include: { admin: { select: { email: true } } },
-      }),
-      this.prisma.auditLog.count(),
-    ]);
-    return { logs, pagination: { page, limit, total, pages: Math.ceil(total / limit) } };
-  }
-
   // ── Coin Settings ───────────────────────────────────────────────────────────
 
   async getCoinSettings() {
@@ -208,5 +366,97 @@ export class AdminService {
       create: { id: 1, coinsPerMinute },
       update: { coinsPerMinute },
     });
+  }
+
+  // ── Ad Settings ─────────────────────────────────────────────────────────────
+
+  async getAdSettings() {
+    return this.prisma.adSetting.upsert({
+      where: { id: 1 },
+      create: { id: 1 },
+      update: {},
+    });
+  }
+
+  async updateAdSettings(data: any) {
+    const update: any = {};
+    if (data.adProvider !== undefined) {
+      const allowed = ['none', 'adsense', 'adsterra'];
+      if (!allowed.includes(data.adProvider)) throw new BadRequestException('Invalid ad provider');
+      update.adProvider = data.adProvider;
+    }
+    if (data.adBlockerDetection !== undefined) update.adBlockerDetection = data.adBlockerDetection === true || data.adBlockerDetection === 'true';
+    if (data.requireAdView !== undefined) update.requireAdView = data.requireAdView === true || data.requireAdView === 'true';
+    if (data.adsensePublisherId !== undefined) update.adsensePublisherId = data.adsensePublisherId || null;
+    if (data.adsenseSlotId !== undefined) update.adsenseSlotId = data.adsenseSlotId || null;
+    if (data.adsterraBannerKey !== undefined) update.adsterraBannerKey = data.adsterraBannerKey || null;
+    if (data.adsterraNativeKey !== undefined) update.adsterraNativeKey = data.adsterraNativeKey || null;
+    return this.prisma.adSetting.upsert({
+      where: { id: 1 },
+      create: { id: 1, ...update },
+      update,
+    });
+  }
+
+  // ── Popup Messages ──────────────────────────────────────────────────────────
+
+  async getPopups() {
+    return this.prisma.popupMessage.findMany({ orderBy: { sortOrder: 'asc' } });
+  }
+
+  async createPopup(data: any) {
+    return this.prisma.popupMessage.create({
+      data: {
+        title: data.title,
+        message: data.message,
+        imageUrl: data.imageUrl || null,
+        enabled: data.enabled === 'true' || data.enabled === true,
+        showOnce: data.showOnce === 'true' || data.showOnce === true,
+        sortOrder: data.sortOrder ? parseInt(data.sortOrder) : 0,
+      },
+    });
+  }
+
+  async updatePopup(id: number, data: any) {
+    const update: any = {};
+    if (data.title !== undefined) update.title = data.title;
+    if (data.message !== undefined) update.message = data.message;
+    if (data.imageUrl !== undefined) update.imageUrl = data.imageUrl;
+    if (data.enabled !== undefined) update.enabled = data.enabled === 'true' || data.enabled === true;
+    if (data.showOnce !== undefined) update.showOnce = data.showOnce === 'true' || data.showOnce === true;
+    if (data.sortOrder !== undefined) update.sortOrder = parseInt(data.sortOrder);
+    return this.prisma.popupMessage.update({ where: { id }, data: update });
+  }
+
+  async deletePopup(id: number) {
+    return this.prisma.popupMessage.delete({ where: { id } });
+  }
+
+  // ── Site Settings ───────────────────────────────────────────────────────────
+
+  async updateSiteSettings(data: any, imageFilename?: string) {
+    const update: any = {};
+    if (data.siteName !== undefined) update.siteName = data.siteName;
+    if (data.heroTitle !== undefined) update.heroTitle = data.heroTitle;
+    if (data.heroSubtitle !== undefined) update.heroSubtitle = data.heroSubtitle;
+    if (data.faviconPath !== undefined) update.faviconPath = data.faviconPath;
+    if (data.logoPath !== undefined) update.logoPath = data.logoPath;
+    if (data.discordInviteUrl !== undefined) update.discordInviteUrl = data.discordInviteUrl;
+    if (data.maintenanceMode !== undefined) update.maintenanceMode = data.maintenanceMode === 'true' || data.maintenanceMode === true;
+    if (data.discordPopupEnabled !== undefined) update.discordPopupEnabled = data.discordPopupEnabled === 'true' || data.discordPopupEnabled === true;
+    if (data.discordBotEnabled !== undefined) update.discordBotEnabled = data.discordBotEnabled === 'true' || data.discordBotEnabled === true;
+    if (data.discordBotToken !== undefined) update.discordBotToken = data.discordBotToken || null;
+    if (data.discordUtrChannelId !== undefined) update.discordUtrChannelId = data.discordUtrChannelId || null;
+    if (data.discordTicketChannelId !== undefined) update.discordTicketChannelId = data.discordTicketChannelId || null;
+    if (data.discordPingRoleId !== undefined) update.discordPingRoleId = data.discordPingRoleId || null;
+    if (data.backgroundOverlayOpacity !== undefined) update.backgroundOverlayOpacity = parseFloat(data.backgroundOverlayOpacity);
+    if (imageFilename) update.backgroundImage = `/uploads/${imageFilename}`;
+    if (data.backgroundImage !== undefined && !imageFilename) update.backgroundImage = data.backgroundImage;
+
+    const existing = await this.prisma.siteSetting.findFirst();
+    if (existing) {
+      return this.prisma.siteSetting.update({ where: { id: existing.id }, data: update });
+    }
+    return this.prisma.siteSetting.create({ data: update });
   }
 }

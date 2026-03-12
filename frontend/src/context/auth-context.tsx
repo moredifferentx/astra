@@ -61,7 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refreshUser]);
 
   const login = useCallback(async (token: string) => {
-    Cookies.set('auth_token', token, { expires: 7, sameSite: 'lax' });
+    Cookies.set('auth_token', token, { expires: 0.5, sameSite: 'lax' });
     setLoading(true);
     await refreshUser();
     setLoading(false);

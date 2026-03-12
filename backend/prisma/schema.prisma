@@ -41,6 +41,7 @@ enum ServerStatus {
 enum TicketStatus {
   open
   in_progress
+  resolved
   closed
 }
 
@@ -78,6 +79,7 @@ model User {
   ipAddress              String?   @map("ip_address")
   lastLoginIp            String?   @map("last_login_ip")
   pterodactylUserId      Int?      @map("pterodactyl_user_id")
+  pterodactylPassword    String?   @map("pterodactyl_password")
   flagged                Boolean   @default(false)
   lastClaimTime          DateTime? @map("last_claim_time")
   oauthProvider          OAuthProvider? @map("oauth_provider")
@@ -87,6 +89,9 @@ model User {
   verificationTokenExpires DateTime? @map("verification_token_expires")
   createdAt              DateTime  @default(now()) @map("created_at")
 
+  referralCode           String?   @unique @map("referral_code")
+  referredBy             Int?      @map("referred_by")
+
   servers        Server[]
   couponRedemptions CouponRedemption[]
   idempotencyKeys   IdempotencyKey[]
@@ -94,9 +99,12 @@ model User {
   tickets           Ticket[]
   ticketMessages    TicketMessage[]
   auditLogs         AuditLog[]
+  referralsMade      Referral[] @relation("ReferralReferrer")
+  referralsReceived  Referral[] @relation("ReferralReferred")
 
   @@index([email])
   @@index([oauthProvider, oauthId])
+  @@index([referralCode])
   @@map("users")
 }
 
@@ -123,6 +131,7 @@ model PlanCoin {
   swap           Int          @default(0)
 
   servers Server[]
+  allowedNodes PlanNodeAllocation[] @relation("CoinPlanNodes")
 
   @@map("plans_coin")
 }
@@ -145,8 +154,26 @@ model PlanReal {
   swap         Int          @default(0)
 
   servers Server[]
+  allowedNodes PlanNodeAllocation[] @relation("RealPlanNodes")
 
   @@map("plans_real")
+}
+
+// ─── Plan Node Allocation ────────────────────────────────────────────────────
+
+model PlanNodeAllocation {
+  id           Int       @id @default(autoincrement())
+  planType     PlanType  @map("plan_type")
+  planCoinId   Int?      @map("plan_coin_id")
+  planRealId   Int?      @map("plan_real_id")
+  nodeId       Int       @map("node_id")
+  nodeName     String    @default("") @map("node_name")
+
+  planCoin PlanCoin? @relation("CoinPlanNodes", fields: [planCoinId], references: [id], onDelete: Cascade)
+  planReal PlanReal? @relation("RealPlanNodes", fields: [planRealId], references: [id], onDelete: Cascade)
+
+  @@unique([planType, planCoinId, planRealId, nodeId])
+  @@map("plan_node_allocations")
 }
 
 // ─── Servers ─────────────────────────────────────────────────────────────────
@@ -359,6 +386,15 @@ model SiteSetting {
   heroTitle                String? @map("hero_title")
   heroSubtitle             String? @map("hero_subtitle")
   maintenanceMode          Boolean @default(false) @map("maintenance_mode")
+  discordInviteUrl         String? @map("discord_invite_url")
+  discordPopupEnabled      Boolean @default(false) @map("discord_popup_enabled")
+
+  // Discord Bot Settings
+  discordBotToken          String? @map("discord_bot_token")
+  discordBotEnabled        Boolean @default(false) @map("discord_bot_enabled")
+  discordUtrChannelId      String? @map("discord_utr_channel_id")
+  discordTicketChannelId   String? @map("discord_ticket_channel_id")
+  discordPingRoleId        String? @map("discord_ping_role_id")
 
   @@map("site_settings")
 }
@@ -377,4 +413,67 @@ model CoinSetting {
   coinsPerMinute Int @default(1) @map("coins_per_minute")
 
   @@map("coin_settings")
+}
+
+// ─── Affiliate / Referral ────────────────────────────────────────────────────
+
+model Referral {
+  id               Int      @id @default(autoincrement())
+  referrerId       Int      @map("referrer_id")
+  referredId       Int      @map("referred_id")
+  commissionEarned Float    @default(0) @map("commission_earned")
+  planName         String?  @map("plan_name")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  referrer User @relation("ReferralReferrer", fields: [referrerId], references: [id])
+  referred User @relation("ReferralReferred", fields: [referredId], references: [id])
+
+  @@index([referrerId])
+  @@index([referredId])
+  @@map("referrals")
+}
+
+model AffiliateSettings {
+  id                   Int     @id @default(1)
+  enabled              Boolean @default(false)
+  commissionPercent    Int     @default(10) @map("commission_percent")
+  discountPercent      Int     @default(10) @map("discount_percent")
+  discordClaimRequired Boolean @default(false) @map("discord_claim_required")
+  discordServerUrl     String? @map("discord_server_url")
+
+  @@map("affiliate_settings")
+}
+
+// ─── Ad Settings ─────────────────────────────────────────────────────────────
+
+model AdSetting {
+  id                 Int     @id @default(1)
+  adProvider         String  @default("none") @map("ad_provider")          // "none" | "adsense" | "adsterra"
+  adBlockerDetection Boolean @default(true) @map("ad_blocker_detection")
+  requireAdView      Boolean @default(true) @map("require_ad_view")
+
+  // Google AdSense
+  adsensePublisherId String? @map("adsense_publisher_id")
+  adsenseSlotId      String? @map("adsense_slot_id")
+
+  // Adsterra
+  adsterraBannerKey  String? @map("adsterra_banner_key")
+  adsterraNativeKey  String? @map("adsterra_native_key")
+
+  @@map("ad_settings")
+}
+
+// ─── Popup Messages ──────────────────────────────────────────────────────────
+
+model PopupMessage {
+  id        Int      @id @default(autoincrement())
+  title     String
+  message   String
+  imageUrl  String?  @map("image_url")
+  enabled   Boolean  @default(true)
+  showOnce  Boolean  @default(false) @map("show_once")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("popup_messages")
 }

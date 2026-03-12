@@ -87,14 +87,15 @@ export function PurchaseModal({ open, onClose, plan, planType, category }: Purch
 
   // Load nodes when reaching node step
   useEffect(() => {
-    if (step === 'node' && nodes.length === 0) {
+    if (step === 'node') {
       setLoadingNodes(true);
-      api.get<Node[]>('/servers/nodes')
+      setNodes([]);
+      api.get<Node[]>('/servers/nodes', { params: { planType, planId: plan?.id } })
         .then((r) => setNodes(r.data))
         .catch(() => toast.error('Failed to load locations'))
         .finally(() => setLoadingNodes(false));
     }
-  }, [step, nodes.length]);
+  }, [step, planType, plan?.id]);
 
   if (!plan) return null;
 
@@ -355,7 +356,7 @@ export function PurchaseModal({ open, onClose, plan, planType, category }: Purch
               <span className="text-sm font-bold text-[#ff7a18]">
                 {planType === 'coin'
                   ? `${plan.initialPrice || plan.coinPrice} coins`
-                  : `$${plan.price?.toFixed?.(2) || plan.price}`}
+                  : `₹${plan.price?.toFixed?.(2) || plan.price}`}
                 {plan.durationDays > 0 ? ` / ${plan.durationDays}d` : ''}
               </span>
             </div>

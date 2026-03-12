@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { ServerStatus } from '@prisma/client';
 
 @Injectable()
 export class SiteService {
@@ -39,10 +40,29 @@ export class SiteService {
   }
 
   async getLandingPlans() {
-    return this.prisma.landingPlan.findMany({ where: { active: true }, orderBy: { id: 'asc' } });
+    const [coin, real] = await this.prisma.$transaction([
+      this.prisma.planCoin.findMany({ orderBy: { coinPrice: 'asc' } }),
+      this.prisma.planReal.findMany({ orderBy: { price: 'asc' } }),
+    ]);
+    return { coin, real };
   }
 
   async getFeatures() {
     return this.prisma.feature.findMany();
+  }
+
+  async getActivePopups() {
+    return this.prisma.popupMessage.findMany({
+      where: { enabled: true },
+      orderBy: { sortOrder: 'asc' },
+    });
+  }
+
+  async getPublicStats() {
+    const [activeUsers, activeServers] = await this.prisma.$transaction([
+      this.prisma.user.count(),
+      this.prisma.server.count({ where: { status: ServerStatus.active } }),
+    ]);
+    return { activeUsers, activeServers, uptime: '99.9%' };
   }
 }

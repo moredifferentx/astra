@@ -26,6 +26,8 @@ type FormValues = z.infer<typeof schema>;
 
 const STATUS_STYLE: Record<string, string> = {
   open: 'text-green-400',
+  in_progress: 'text-blue-400',
+  resolved: 'text-purple-400',
   closed: 'text-gray-400',
 };
 
@@ -59,7 +61,7 @@ export default function TicketsPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 py-8">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">Support Tickets</h1>
           <p className="mt-1 text-sm text-gray-400">Open a ticket for any issue or question.</p>
@@ -108,7 +110,7 @@ export default function TicketsPage() {
                   <p className="text-xs text-gray-400">#{t.id} · {new Date(t.updatedAt).toLocaleDateString()}</p>
                 </div>
                 <span className={`text-xs font-medium capitalize ${STATUS_STYLE[t.status] ?? 'text-gray-400'}`}>
-                  {t.status}
+                  {t.status.replace('_', ' ')}
                 </span>
               </Link>
             </li>

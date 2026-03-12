@@ -177,6 +177,19 @@ export class ServerManageController {
     return this.svc.getNetwork(id, u.id);
   }
 
+  // ── SFTP ─────────────────────────────────────────────────────────────────
+
+  @Get('sftp')
+  sftpDetails(@Param('serverId', ParseIntPipe) id: number, @CurrentUser() u: any) {
+    return this.svc.getSftpDetails(id, u.id);
+  }
+
+  @Post('sftp/reset-password')
+  @HttpCode(200)
+  resetSftpPassword(@Param('serverId', ParseIntPipe) id: number, @CurrentUser() u: any) {
+    return this.svc.resetSftpPassword(id, u.id);
+  }
+
   // ── Subdomain ────────────────────────────────────────────────────────────
 
   @Get('subdomain')

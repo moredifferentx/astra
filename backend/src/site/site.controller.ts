@@ -24,6 +24,12 @@ export class SiteController {
   @Get('features')
   getFeatures() { return this.siteService.getFeatures(); }
 
+  @Get('popups')
+  getPopups() { return this.siteService.getActivePopups(); }
+
+  @Get('public-stats')
+  getPublicStats() { return this.siteService.getPublicStats(); }
+
   // ── Admin endpoints ─────────────────────────────────────────────────────────
 
   @Put('admin/frontpage/:section')
