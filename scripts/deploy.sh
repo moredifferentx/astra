@@ -143,6 +143,58 @@ load_env_for_compose() {
     fi
 }
 
+wait_for_postgres() {
+    log "Waiting for PostgreSQL to be ready..."
+
+    local retries=0
+    while ! docker compose -f "$COMPOSE_FILE" exec -T postgres pg_isready -U postgres >/dev/null 2>&1; do
+        retries=$((retries + 1))
+        if [[ $retries -gt 30 ]]; then
+            err "PostgreSQL did not become ready."
+            return 1
+        fi
+        sleep 2
+    done
+}
+
+ensure_postgres_runtime_sync() {
+    load_env_for_compose
+
+    local pg_user pg_password pg_db escaped_password
+    pg_user="${POSTGRES_USER:-astra}"
+    pg_password="${POSTGRES_PASSWORD:-}"
+    pg_db="${POSTGRES_DB:-astra}"
+    escaped_password=${pg_password//\'/\'\'}
+
+    log "Syncing live PostgreSQL role/database with backend/.env..."
+
+    docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+        -v app_user="$pg_user" \
+        -v app_password="$escaped_password" \
+        -v app_db="$pg_db" <<'SQLEOF' >/dev/null
+DO
+$$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user') THEN
+        EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password');
+    ELSE
+        EXECUTE format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'app_user', :'app_password');
+    END IF;
+END
+$$;
+
+SELECT format('CREATE DATABASE %I OWNER %I', :'app_db', :'app_user')
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'app_db')
+\gexec
+
+SELECT format('ALTER DATABASE %I OWNER TO %I', :'app_db', :'app_user')
+WHERE EXISTS (SELECT 1 FROM pg_database WHERE datname = :'app_db')
+\gexec
+SQLEOF
+
+    log "PostgreSQL env sync complete for database '$pg_db' and user '$pg_user'."
+}
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  STEP 1: .env Sync — Interactive Setup
 # ══════════════════════════════════════════════════════════════════════════════
@@ -264,10 +316,37 @@ sync_env() {
     # ── Frontend URL ───────────────────────────────────────────────────────
     echo ""
     echo -e "${YELLOW}  ── App ──${NC}"
+
+    # ── Domain (used for SSL, nginx, URLs) ─────────────────────────────────
+    local site_domain
+    site_domain=$(read_env_value "SITE_DOMAIN")
+    if [[ -z "$site_domain" ]]; then
+        echo ""
+        echo -en "${CYAN}  Your domain (e.g. example.com, or blank for localhost)${NC}: "
+        local input_domain
+        read -r input_domain </dev/tty || input_domain=""
+        if [[ -n "$input_domain" ]]; then
+            # Strip protocol prefix if user pasted a URL
+            input_domain=$(echo "$input_domain" | sed 's|^https\?://||; s|/.*||')
+            set_env_value "SITE_DOMAIN" "$input_domain"
+            site_domain="$input_domain"
+        fi
+    else
+        log "  SITE_DOMAIN: $site_domain"
+    fi
+
+    # Auto-fill FRONTEND_URL from SITE_DOMAIN
     local frontend_url
     frontend_url=$(read_env_value "FRONTEND_URL")
-    if [[ -z "$frontend_url" || "$frontend_url" == "http://localhost"* ]]; then
-        prompt_value "FRONTEND_URL" "Frontend URL (e.g. https://yourdomain.com)" "http://localhost:3000" "n"
+    if [[ -n "$site_domain" ]]; then
+        if [[ -z "$frontend_url" || "$frontend_url" == "http://localhost"* ]]; then
+            set_env_value "FRONTEND_URL" "https://${site_domain}"
+            log "  FRONTEND_URL auto-set to https://${site_domain}"
+        fi
+    else
+        if [[ -z "$frontend_url" || "$frontend_url" == "http://localhost"* ]]; then
+            prompt_value "FRONTEND_URL" "Frontend URL (e.g. https://yourdomain.com)" "http://localhost:3000" "n"
+        fi
     fi
 
     # ── Pterodactyl (REQUIRED) ─────────────────────────────────────────────
@@ -326,7 +405,7 @@ sync_env() {
     cf_token=$(read_env_value "CLOUDFLARE_API_TOKEN")
     if [[ -n "$cf_token" ]]; then
         prompt_value "CLOUDFLARE_ZONE_ID" "Cloudflare Zone ID" "" "y"
-        prompt_value "CLOUDFLARE_DOMAIN" "Your domain (e.g. astranodes.cloud)" "" "y"
+        prompt_value "CLOUDFLARE_DOMAIN" "Your domain (e.g. astranodes.cloud)" "${site_domain:-}" "y"
     fi
 
     # ── Admin Email ────────────────────────────────────────────────────────
@@ -341,7 +420,7 @@ sync_env() {
     echo -e "${BLUE}  └──────────────────────────────────────────────────────┘${NC}"
 
     local summary_keys=(
-        "NODE_ENV" "PORT" "FRONTEND_URL"
+        "NODE_ENV" "PORT" "SITE_DOMAIN" "FRONTEND_URL"
         "POSTGRES_USER" "POSTGRES_DB"
         "PTERODACTYL_URL"
         "CLOUDFLARE_DOMAIN"
@@ -492,17 +571,20 @@ setup_ssl() {
     step "SSL Certificate Setup"
     load_env_for_compose
 
-    local cf_domain
-    cf_domain=$(read_env_value "CLOUDFLARE_DOMAIN")
+    # Resolve domain: SITE_DOMAIN takes priority, fallback to CLOUDFLARE_DOMAIN
+    local domain
+    domain=$(read_env_value "SITE_DOMAIN")
+    [[ -z "$domain" ]] && domain=$(read_env_value "CLOUDFLARE_DOMAIN")
 
-    if [[ -z "$cf_domain" ]]; then
-        warn "CLOUDFLARE_DOMAIN not set. Skipping SSL setup."
+    if [[ -z "$domain" ]]; then
+        warn "No domain configured (SITE_DOMAIN or CLOUDFLARE_DOMAIN)."
+        warn "Skipping SSL setup. Nginx will run HTTP-only."
         return 0
     fi
 
-    local cert_dir="$SSL_DIR/live/$cf_domain"
-    local cert_file="$cert_dir/fullchain.pem"
-    local key_file="$cert_dir/privkey.pem"
+    # Certs stored flat in ./ssl/live/ (matches docker-compose volume mount)
+    local cert_file="$SSL_DIR/live/fullchain.pem"
+    local key_file="$SSL_DIR/live/privkey.pem"
 
     # Check if valid certificate already exists
     if [[ -f "$cert_file" && -f "$key_file" ]]; then
@@ -514,18 +596,22 @@ setup_ssl() {
             remaining_days=$(( (expiry_epoch - $(date +%s)) / 86400 ))
             if [[ $remaining_days -gt 30 ]]; then
                 log "SSL certificate valid for $remaining_days more days. Skipping."
-                ensure_nginx_ssl "$cf_domain"
+                ensure_nginx_ssl "$domain"
                 return 0
             fi
             log "SSL certificate expires in $remaining_days days. Renewing..."
         fi
     fi
 
-    mkdir -p "$cert_dir"
+    mkdir -p "$SSL_DIR/live"
 
     local cf_token cf_zone_id
     cf_token=$(read_env_value "CLOUDFLARE_API_TOKEN")
     cf_zone_id=$(read_env_value "CLOUDFLARE_ZONE_ID")
+
+    local admin_email
+    admin_email=$(read_env_value "ADMIN_EMAIL")
+    [[ -z "$admin_email" ]] && admin_email="admin@${domain}"
 
     # ── Strategy 1: Cloudflare Origin Certificate ──────────────────────────
     if [[ -n "$cf_token" && -n "$cf_zone_id" ]]; then
@@ -536,7 +622,7 @@ setup_ssl() {
             -H "Authorization: Bearer $cf_token" \
             -H "Content-Type: application/json" \
             --data "{
-                \"hostnames\": [\"${cf_domain}\", \"*.${cf_domain}\"],
+                \"hostnames\": [\"${domain}\", \"*.${domain}\"],
                 \"requested_validity\": 5475,
                 \"request_type\": \"origin-rsa\"
             }" 2>/dev/null || echo '{"success":false}')
@@ -555,78 +641,126 @@ with open('$key_file', 'w') as f: f.write(key)
                 chmod 600 "$key_file"
                 chmod 644 "$cert_file"
                 log "Cloudflare Origin Certificate obtained (valid 15 years)!"
-                ensure_nginx_ssl "$cf_domain"
+                ensure_nginx_ssl "$domain"
                 return 0
             fi
         fi
-        warn "Cloudflare Origin Certificate failed. Trying certbot..."
+        warn "Cloudflare Origin Certificate failed. Trying certbot DNS challenge..."
     fi
 
     # ── Strategy 2: Certbot with Cloudflare DNS challenge ──────────────────
     if [[ -n "$cf_token" ]] && command -v docker &>/dev/null; then
-        log "Attempting SSL via certbot (Cloudflare DNS challenge)..."
+        log "Attempting SSL via certbot (Cloudflare DNS-01 challenge)..."
 
         local cf_ini="$SSL_DIR/cloudflare.ini"
         echo "dns_cloudflare_api_token = $cf_token" > "$cf_ini"
         chmod 600 "$cf_ini"
-
-        local admin_email
-        admin_email=$(read_env_value "ADMIN_EMAIL")
-        [[ -z "$admin_email" ]] && admin_email="admin@${cf_domain}"
 
         if docker run --rm \
             -v "$(pwd)/$SSL_DIR:/etc/letsencrypt" \
             certbot/dns-cloudflare certonly \
             --dns-cloudflare \
             --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \
-            -d "$cf_domain" \
-            -d "*.${cf_domain}" \
+            -d "$domain" \
+            -d "*.${domain}" \
             --non-interactive \
             --agree-tos \
             --email "$admin_email" \
             --preferred-challenges dns-01 2>/dev/null; then
 
             rm -f "$cf_ini"
-            chmod 600 "$SSL_DIR/live/$cf_domain/privkey.pem" 2>/dev/null || true
-            log "Let's Encrypt certificate obtained!"
+            # Copy certs from certbot's domain-specific dir to flat location
+            local certbot_live="$SSL_DIR/live/$domain"
+            if [[ -f "$certbot_live/fullchain.pem" ]]; then
+                cp "$certbot_live/fullchain.pem" "$cert_file"
+                cp "$certbot_live/privkey.pem" "$key_file"
+            fi
+            chmod 600 "$key_file" 2>/dev/null || true
+            chmod 644 "$cert_file" 2>/dev/null || true
+            log "Let's Encrypt certificate obtained (DNS challenge)!"
 
             # Setup auto-renewal cron (daily at 3am)
             if ! crontab -l 2>/dev/null | grep -q "certbot-renew"; then
                 log "Setting up SSL auto-renewal cron..."
-                (crontab -l 2>/dev/null || true; echo "0 3 * * * cd $(pwd) && docker run --rm -v $(pwd)/$SSL_DIR:/etc/letsencrypt certbot/dns-cloudflare renew --quiet && docker compose -f $COMPOSE_FILE restart nginx > /dev/null 2>&1 # certbot-renew") | crontab -
+                (crontab -l 2>/dev/null || true; echo "0 3 * * * cd $(pwd) && docker run --rm -v $(pwd)/$SSL_DIR:/etc/letsencrypt certbot/dns-cloudflare renew --quiet && cp $(pwd)/$SSL_DIR/live/$domain/fullchain.pem $(pwd)/$cert_file && cp $(pwd)/$SSL_DIR/live/$domain/privkey.pem $(pwd)/$key_file && docker compose -f $COMPOSE_FILE restart nginx > /dev/null 2>&1 # certbot-renew") | crontab -
             fi
 
-            ensure_nginx_ssl "$cf_domain"
+            ensure_nginx_ssl "$domain"
             return 0
         fi
 
         rm -f "$cf_ini"
-        warn "Certbot failed. Falling back to self-signed certificate."
+        warn "Certbot DNS challenge failed. Trying HTTP challenge..."
     fi
 
-    # ── Strategy 3: Self-signed (works with Cloudflare "Full" mode) ────────
-    log "Generating self-signed SSL certificate for origin..."
+    # ── Strategy 3: Certbot HTTP-01 standalone (works on any VPS) ──────────
+    if command -v docker &>/dev/null; then
+        log "Attempting SSL via certbot (HTTP-01 standalone challenge)..."
+        log "This requires port 80 to be available and domain DNS pointing to this server."
+
+        # Stop nginx if running (it holds port 80)
+        docker compose -f "$COMPOSE_FILE" stop nginx 2>/dev/null || true
+
+        if docker run --rm \
+            -v "$(pwd)/$SSL_DIR:/etc/letsencrypt" \
+            -p 80:80 \
+            certbot/certbot certonly \
+            --standalone \
+            -d "$domain" \
+            --non-interactive \
+            --agree-tos \
+            --email "$admin_email" 2>&1; then
+
+            # Copy certs from certbot's domain-specific dir to flat location
+            local certbot_live="$SSL_DIR/live/$domain"
+            if [[ -f "$certbot_live/fullchain.pem" ]]; then
+                cp "$certbot_live/fullchain.pem" "$cert_file"
+                cp "$certbot_live/privkey.pem" "$key_file"
+            fi
+            chmod 600 "$key_file" 2>/dev/null || true
+            chmod 644 "$cert_file" 2>/dev/null || true
+            log "Let's Encrypt certificate obtained (HTTP challenge)!"
+
+            # Setup auto-renewal cron
+            if ! crontab -l 2>/dev/null | grep -q "certbot-renew"; then
+                log "Setting up SSL auto-renewal cron..."
+                (crontab -l 2>/dev/null || true; echo "0 3 * * * cd $(pwd) && docker compose -f $COMPOSE_FILE stop nginx && docker run --rm -v $(pwd)/$SSL_DIR:/etc/letsencrypt -p 80:80 certbot/certbot renew --quiet && cp $(pwd)/$SSL_DIR/live/$domain/fullchain.pem $(pwd)/$cert_file && cp $(pwd)/$SSL_DIR/live/$domain/privkey.pem $(pwd)/$key_file && docker compose -f $COMPOSE_FILE start nginx > /dev/null 2>&1 # certbot-renew") | crontab -
+            fi
+
+            ensure_nginx_ssl "$domain"
+            return 0
+        fi
+
+        warn "Certbot HTTP challenge failed. Falling back to self-signed certificate."
+    fi
+
+    # ── Strategy 4: Self-signed (works everywhere, no external deps) ────────
+    log "Generating self-signed SSL certificate..."
     openssl req -x509 -nodes -days 3650 \
         -newkey rsa:2048 \
         -keyout "$key_file" \
         -out "$cert_file" \
-        -subj "/CN=${cf_domain}" \
-        -addext "subjectAltName=DNS:${cf_domain},DNS:*.${cf_domain}" \
+        -subj "/CN=${domain}" \
+        -addext "subjectAltName=DNS:${domain},DNS:*.${domain}" \
         2>/dev/null
 
     chmod 600 "$key_file"
     chmod 644 "$cert_file"
-    log "Self-signed certificate generated (valid 10 years, use with Cloudflare Full mode)."
+    log "Self-signed certificate generated (valid 10 years)."
+    warn "For production, use a real domain with DNS pointing to this server for Let's Encrypt."
 
-    ensure_nginx_ssl "$cf_domain"
+    ensure_nginx_ssl "$domain"
 }
 
 # ── Generate SSL-enabled nginx config ─────────────────────────────────────────
 ensure_nginx_ssl() {
     local domain="$1"
-    local cert_dir="$SSL_DIR/live/$domain"
+    local cert_file="$SSL_DIR/live/fullchain.pem"
+    local key_file="$SSL_DIR/live/privkey.pem"
 
-    if [[ ! -f "$cert_dir/fullchain.pem" || ! -f "$cert_dir/privkey.pem" ]]; then
+    if [[ ! -f "$cert_file" || ! -f "$key_file" ]]; then
+        warn "SSL certificate files not found. Using HTTP-only config."
+        ensure_nginx_http "$domain"
         return 0
     fi
 
@@ -754,6 +888,124 @@ NGINXEOF
     log "SSL nginx config written to nginx/nginx.conf"
 }
 
+# ── Generate HTTP-only nginx config (no SSL) ──────────────────────────────────
+ensure_nginx_http() {
+    local domain="${1:-_}"
+    local server_names="_"
+
+    if [[ "$domain" != "_" ]]; then
+        server_names="${domain} *.${domain}"
+    fi
+
+    log "Writing HTTP-only nginx configuration..."
+
+    cat > nginx/nginx.conf << 'NGINXEOF'
+upstream backend {
+    server backend:4000;
+}
+
+upstream frontend {
+    server frontend:3000;
+}
+
+# Rate limiting zones
+limit_req_zone $binary_remote_addr zone=api:10m rate=30r/s;
+limit_req_zone $binary_remote_addr zone=auth:10m rate=5r/m;
+
+server {
+    listen 80;
+NGINXEOF
+
+    echo "    server_name ${server_names};" >> nginx/nginx.conf
+
+    cat >> nginx/nginx.conf << 'NGINXEOF'
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    client_max_body_size 10m;
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml text/javascript image/svg+xml;
+    gzip_min_length 1024;
+
+    # API routes -> backend
+    location /api/ {
+        limit_req zone=api burst=20 nodelay;
+        proxy_pass http://backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 30s;
+        proxy_connect_timeout 5s;
+    }
+
+    location /api/auth/ {
+        limit_req zone=auth burst=3 nodelay;
+        proxy_pass http://backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /uploads/ {
+        proxy_pass http://backend;
+        proxy_set_header Host $host;
+        proxy_cache_valid 200 1h;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Content-Disposition "attachment" always;
+    }
+
+    location /health {
+        proxy_pass http://backend;
+        access_log off;
+    }
+
+    location /socket.io/ {
+        proxy_pass http://backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location / {
+        proxy_pass http://frontend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+NGINXEOF
+
+    log "HTTP-only nginx config written to nginx/nginx.conf"
+}
+
+# ── Write appropriate nginx config based on SSL availability ──────────────────
+ensure_nginx_config() {
+    local domain
+    domain=$(read_env_value "SITE_DOMAIN")
+    [[ -z "$domain" ]] && domain=$(read_env_value "CLOUDFLARE_DOMAIN")
+    [[ -z "$domain" ]] && domain="_"
+
+    local cert_file="$SSL_DIR/live/fullchain.pem"
+    local key_file="$SSL_DIR/live/privkey.pem"
+
+    if [[ -f "$cert_file" && -f "$key_file" ]]; then
+        ensure_nginx_ssl "$domain"
+    else
+        ensure_nginx_http "$domain"
+    fi
+}
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  STEP 4: SQLite -> PostgreSQL Migration
 # ══════════════════════════════════════════════════════════════════════════════
@@ -803,16 +1055,8 @@ migrate_sqlite_to_postgres() {
 
     # Ensure PostgreSQL is running
     docker compose -f "$COMPOSE_FILE" up -d postgres redis
-    log "Waiting for PostgreSQL to be ready..."
-    local retries=0
-    while ! docker compose -f "$COMPOSE_FILE" exec -T postgres pg_isready -U "${POSTGRES_USER:-astra}" &>/dev/null; do
-        retries=$((retries + 1))
-        if [[ $retries -gt 30 ]]; then
-            err "PostgreSQL did not become ready."
-            return 1
-        fi
-        sleep 2
-    done
+    wait_for_postgres || return 1
+    ensure_postgres_runtime_sync
 
     # Run Prisma migrations to ensure schema exists
     log "Ensuring PostgreSQL schema is up to date..."
@@ -991,7 +1235,7 @@ backup_database() {
 
     if docker compose -f "$COMPOSE_FILE" ps postgres --status running -q 2>/dev/null | grep -q .; then
         docker compose -f "$COMPOSE_FILE" exec -T postgres \
-            pg_dump -U "${POSTGRES_USER:-astra}" "${POSTGRES_DB:-astra}" | gzip > "$backup_file"
+            pg_dumpall -U postgres | gzip > "$backup_file"
         log "Backup saved: $backup_file"
     else
         warn "PostgreSQL not running, skipping backup."
@@ -1010,7 +1254,8 @@ deploy() {
 
     log "Starting PostgreSQL and Redis..."
     docker compose -f "$COMPOSE_FILE" up -d postgres redis
-    sleep 5
+    wait_for_postgres || return 1
+    ensure_postgres_runtime_sync
 
     log "Running database migrations..."
     docker compose -f "$COMPOSE_FILE" run --rm backend npx prisma migrate deploy
@@ -1023,6 +1268,8 @@ deploy() {
     docker compose -f "$COMPOSE_FILE" up -d --no-deps frontend
     sleep 3
 
+    ensure_nginx_config
+
     log "Starting nginx..."
     docker compose -f "$COMPOSE_FILE" up -d --no-deps nginx
 }
@@ -1034,12 +1281,18 @@ health_check() {
     step "Health Check"
 
     for i in $(seq 1 $HEALTH_RETRIES); do
-        if curl -sf "$HEALTH_URL" > /dev/null 2>&1; then
+        if curl -sf "$HEALTH_URL" > /dev/null 2>&1 || curl -skf "https://localhost/health" > /dev/null 2>&1; then
             log "Health check passed!"
             return 0
         fi
         if [ "$i" -eq "$HEALTH_RETRIES" ]; then
             err "Health check failed after $HEALTH_RETRIES attempts."
+            warn "Service status:"
+            docker compose -f "$COMPOSE_FILE" ps || true
+            warn "Recent nginx logs:"
+            docker compose -f "$COMPOSE_FILE" logs --tail=20 nginx || true
+            warn "Recent backend logs:"
+            docker compose -f "$COMPOSE_FILE" logs --tail=20 backend || true
             warn "Check logs: docker compose -f $COMPOSE_FILE logs --tail=50"
             exit 1
         fi
