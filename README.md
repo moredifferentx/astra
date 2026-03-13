@@ -317,8 +317,43 @@ cd Astra
 
 **2. Run the deploy script:**
 ```bash
-bash deploy.sh
+bash scripts/deploy.sh
 ```
+
+### Nginx Proxy Manager Mode (Pterodactyl + Website on One VPS)
+
+If you want Nginx Proxy Manager (Docker) to own ports 80/443 and route both Pterodactyl + website internally, use one of these commands:
+
+```bash
+# first-time bootstrap + NPM gateway setup
+bash scripts/deploy.sh --init-with-npm
+
+# regular deploy + NPM gateway checks
+bash scripts/deploy.sh --deploy-with-npm
+
+# only configure/repair NPM gateway layer
+bash scripts/deploy.sh --setup-npm-gateway
+```
+
+What this does automatically:
+- Detects current listeners on ports 80/443
+- Moves detected Pterodactyl NGINX listener from public 80/443 to `127.0.0.1:8080` (with backup + rollback on invalid config)
+- Ensures Docker and Docker Compose are installed
+- Creates `/opt/nginx-proxy-manager/docker-compose.yml`
+- Starts `jc21/nginx-proxy-manager:latest` on ports `80`, `81`, `443`
+- Opens firewall ports `80`, `81`, `443` if UFW is active
+- Prints running containers, listening ports, and NPM access details
+
+NPM defaults:
+- URL: `http://SERVER_IP:81`
+- Email: `admin@example.com`
+- Password: `changeme`
+- Change these immediately after login
+
+Recommended proxy hosts in NPM:
+- `panel.yourdomain.com` -> `http://127.0.0.1:8080`
+- `yourdomain.com` -> `http://127.0.0.1:3000`
+- Enable WebSocket support and request SSL certificates in NPM
 
 The script will interactively ask for:
 - Your domain name (e.g. `panel.example.com`)
