@@ -22,7 +22,7 @@ set -euo pipefail
 #    ./scripts/deploy.sh --ssl        # Only setup SSL
 #    ./scripts/deploy.sh --migrate-sqlite [/path/to/db.sqlite]
 #    ./scripts/deploy.sh --setup-hooks # Install git post-merge hook
-#    ./scripts/deploy.sh --setup-npm-gateway # Configure NPM + Pterodactyl 8080
+#    ./scripts/deploy.sh --setup-npm-gateway # Configure NPM + Pterodactyl internal port
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── Configuration ──────────────────────────────────────────────────────────────
@@ -38,7 +38,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 NPM_DIR="${NPM_DIR:-/opt/nginx-proxy-manager}"
 NPM_COMPOSE_FILE="$NPM_DIR/docker-compose.yml"
-PTERO_INTERNAL_BIND="127.0.0.1:8080"
+PTERO_PANEL_INTERNAL_PORT="${PTERO_PANEL_INTERNAL_PORT:-18080}"
+PTERO_INTERNAL_BIND="127.0.0.1:${PTERO_PANEL_INTERNAL_PORT}"
 
 # ── Colors ─────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -1387,8 +1388,8 @@ done | sort -u
 '
 }
 
-move_pterodactyl_to_internal_8080() {
-    step "Moving Pterodactyl NGINX to 127.0.0.1:8080"
+move_pterodactyl_to_internal_panel_port() {
+    step "Moving Pterodactyl NGINX to ${PTERO_INTERNAL_BIND}"
 
     if ! run_root_cmd test -d /etc/nginx; then
         warn "System NGINX is not installed; skipping Pterodactyl NGINX migration."
@@ -1507,6 +1508,8 @@ services:
     volumes:
       - ./data:/data
       - ./letsencrypt:/etc/letsencrypt
+        extra_hosts:
+            - "host.docker.internal:host-gateway"
 YAMLEOF
 
     log "Wrote $NPM_COMPOSE_FILE"
@@ -1567,15 +1570,15 @@ print_npm_summary() {
     run_root_cmd docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 
     echo ""
-    info "Listening ports (80/81/443/8080/3000):"
+    info "Listening ports (80/81/443/3000/18080/8080):"
     if command -v ss >/dev/null 2>&1; then
-        run_root_cmd ss -ltnp | grep -E ':(80|81|443|8080|3000)\s' || true
+        run_root_cmd ss -ltnp | grep -E ':(80|81|443|3000|18080|8080)\s' || true
     fi
 
     echo ""
     info "Add these proxy hosts in NPM:"
-    info "  1) panel.yourdomain.com -> http://127.0.0.1:8080"
-    info "  2) yourdomain.com -> http://127.0.0.1:3000"
+    info "  1) panel.yourdomain.com -> http://host.docker.internal:${PTERO_PANEL_INTERNAL_PORT}"
+    info "  2) yourdomain.com -> http://host.docker.internal:3000"
     info "  3) Enable WebSocket support for each host"
     info "  4) Request SSL cert in NPM (Let's Encrypt + Force SSL)"
 }
@@ -1584,7 +1587,7 @@ setup_npm_gateway() {
     step "NPM Gateway Setup"
     detect_port_usage
     install_docker_stack_if_missing
-    move_pterodactyl_to_internal_8080
+    move_pterodactyl_to_internal_panel_port
     setup_npm_compose
     open_firewall_ports_if_needed
     start_npm
@@ -1595,7 +1598,9 @@ setup_npm_gateway() {
 configure_app_ports_for_npm_mode() {
     step "Configuring App Ports for NPM Mode"
 
-    # Keep pterodactyl on 8080 and run Astra app proxy on a separate internal port.
+    # Keep pterodactyl panel on a dedicated internal port and run Astra app proxy separately.
+    export APP_PROXY_BIND_ADDR="127.0.0.1"
+
     if [[ -z "${HTTP_PORT:-}" || "${HTTP_PORT:-}" == "8080" ]]; then
         export HTTP_PORT="3000"
     fi
@@ -1609,6 +1614,7 @@ configure_app_ports_for_npm_mode() {
 
     log "Set app nginx HTTP port to ${HTTP_PORT} (host -> container 8080)."
     log "Set app nginx HTTPS port to ${HTTPS_PORT} (host -> container 443)."
+    log "Bound app nginx host ports to ${APP_PROXY_BIND_ADDR} only."
     log "Health check URL updated to ${HEALTH_URL}"
 }
 
@@ -1837,7 +1843,7 @@ case "${1:-}" in
         echo "  --ssl               Only setup SSL certificates"
         echo "  --migrate-sqlite [FILE]  Migrate SQLite database to PostgreSQL"
         echo "  --setup-hooks       Install git post-merge hook"
-        echo "  --setup-npm-gateway Configure NPM + Pterodactyl internal 8080"
+        echo "  --setup-npm-gateway Configure NPM + Pterodactyl internal panel port"
         echo "  --init-with-npm     Init flow plus NPM gateway setup"
         echo "  --deploy-with-npm   Full deployment plus NPM gateway setup"
         echo "  --help              Show this help"

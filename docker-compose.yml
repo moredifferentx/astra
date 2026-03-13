@@ -83,8 +83,8 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "${HTTP_PORT:-8080}:8080"
-      - "${HTTPS_PORT:-443}:443"
+      - "${APP_PROXY_BIND_ADDR:-0.0.0.0}:${HTTP_PORT:-8080}:8080"
+      - "${APP_PROXY_BIND_ADDR:-0.0.0.0}:${HTTPS_PORT:-443}:443"
     volumes:
       - ./ssl/live:/etc/nginx/ssl:ro
     depends_on:

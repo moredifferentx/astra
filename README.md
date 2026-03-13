@@ -337,7 +337,8 @@ bash scripts/deploy.sh --setup-npm-gateway
 
 What this does automatically:
 - Detects current listeners on ports 80/443
-- Moves detected Pterodactyl NGINX listener from public 80/443 to `127.0.0.1:8080` (with backup + rollback on invalid config)
+- Moves detected Pterodactyl NGINX listener from public 80/443 to `127.0.0.1:18080` (configurable, with backup + rollback on invalid config)
+- Binds Astra app proxy to localhost-only host ports in NPM mode (not public)
 - Ensures Docker and Docker Compose are installed
 - Creates `/opt/nginx-proxy-manager/docker-compose.yml`
 - Starts `jc21/nginx-proxy-manager:latest` on ports `80`, `81`, `443`
@@ -351,8 +352,8 @@ NPM defaults:
 - Change these immediately after login
 
 Recommended proxy hosts in NPM:
-- `panel.yourdomain.com` -> `http://127.0.0.1:8080`
-- `yourdomain.com` -> `http://127.0.0.1:3000`
+- `panel.yourdomain.com` -> `http://host.docker.internal:18080`
+- `yourdomain.com` -> `http://host.docker.internal:3000`
 - Enable WebSocket support and request SSL certificates in NPM
 
 The script will interactively ask for:
