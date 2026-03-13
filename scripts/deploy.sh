@@ -15,11 +15,14 @@ set -euo pipefail
 #  Usage:
 #    ./scripts/deploy.sh              # Full deployment
 #    ./scripts/deploy.sh --init       # First-time setup (interactive)
+#    ./scripts/deploy.sh --init-with-npm # First-time setup + NPM gateway
+#    ./scripts/deploy.sh --deploy-with-npm # Full deploy + NPM gateway
 #    ./scripts/deploy.sh --sync-env   # Only sync .env
 #    ./scripts/deploy.sh --dns        # Only setup Cloudflare DNS
 #    ./scripts/deploy.sh --ssl        # Only setup SSL
 #    ./scripts/deploy.sh --migrate-sqlite [/path/to/db.sqlite]
 #    ./scripts/deploy.sh --setup-hooks # Install git post-merge hook
+#    ./scripts/deploy.sh --setup-npm-gateway # Configure NPM + Pterodactyl 8080
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── Configuration ──────────────────────────────────────────────────────────────
@@ -33,6 +36,9 @@ ENV_FILE="./backend/.env"
 ENV_EXAMPLE="./backend/.env.example"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+NPM_DIR="${NPM_DIR:-/opt/nginx-proxy-manager}"
+NPM_COMPOSE_FILE="$NPM_DIR/docker-compose.yml"
+PTERO_INTERNAL_BIND="127.0.0.1:8080"
 
 # ── Colors ─────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -1320,6 +1326,273 @@ health_check() {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  STEP 9: NPM Gateway + Pterodactyl Internal Port
+# ══════════════════════════════════════════════════════════════════════════════
+run_root_cmd() {
+    if [[ "$EUID" -eq 0 ]]; then
+        "$@"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo "$@"
+    else
+        err "This step requires root privileges, but sudo is not available."
+        return 1
+    fi
+}
+
+detect_port_usage() {
+    step "Detecting Port Usage (80/81/443)"
+    if command -v ss >/dev/null 2>&1; then
+        run_root_cmd ss -ltnp | grep -E ':(80|81|443)\s' || true
+    else
+        warn "ss command is not available; skipping detailed port detection."
+    fi
+}
+
+install_docker_stack_if_missing() {
+    step "Ensuring Docker + Docker Compose"
+
+    if ! command -v docker >/dev/null 2>&1; then
+        warn "Docker not found. Installing Docker Engine..."
+        run_root_cmd apt-get update -y
+        run_root_cmd apt-get install -y ca-certificates curl gnupg lsb-release
+        curl -fsSL https://get.docker.com | run_root_cmd sh
+        run_root_cmd systemctl enable --now docker
+        log "Docker installed."
+    else
+        log "Docker already installed."
+    fi
+
+    if ! run_root_cmd docker compose version >/dev/null 2>&1; then
+        warn "Docker Compose plugin not found. Installing docker-compose-plugin..."
+        run_root_cmd apt-get update -y
+        run_root_cmd apt-get install -y docker-compose-plugin
+    fi
+
+    if ! run_root_cmd docker compose version >/dev/null 2>&1; then
+        err "docker compose is still unavailable after installation attempt."
+        return 1
+    fi
+
+    log "Docker Compose is available."
+}
+
+discover_pterodactyl_nginx_files() {
+    run_root_cmd bash -lc '
+set -e
+for d in /etc/nginx/sites-enabled /etc/nginx/sites-available /etc/nginx/conf.d; do
+  [[ -d "$d" ]] || continue
+  find "$d" -maxdepth 1 -type f \( -name "*.conf" -o -name "*" \) -print0 2>/dev/null \
+    | xargs -0 -r grep -El "(pterodactyl|/var/www/pterodactyl|server_name[[:space:]].*panel)" 2>/dev/null || true
+done | sort -u
+'
+}
+
+move_pterodactyl_to_internal_8080() {
+    step "Moving Pterodactyl NGINX to 127.0.0.1:8080"
+
+    if ! run_root_cmd test -d /etc/nginx; then
+        warn "System NGINX is not installed; skipping Pterodactyl NGINX migration."
+        return 0
+    fi
+
+    local files_raw
+    files_raw="$(discover_pterodactyl_nginx_files || true)"
+
+    if [[ -z "$files_raw" ]]; then
+        warn "No Pterodactyl NGINX config found automatically."
+        warn "If panel still listens on 80/443, manually move it to $PTERO_INTERNAL_BIND."
+        return 0
+    fi
+
+    local changed=0
+    local file
+    while IFS= read -r file; do
+        [[ -z "$file" ]] && continue
+
+        if ! run_root_cmd grep -Eq '^[[:space:]]*listen[[:space:]].*(80|443)' "$file"; then
+            log "No 80/443 listeners found in $file; skipping."
+            continue
+        fi
+
+        local backup_file
+        backup_file="${file}.bak-astra-npm"
+        if ! run_root_cmd test -f "$backup_file"; then
+            run_root_cmd cp "$file" "$backup_file"
+        fi
+
+        # Replace all 80/443 listeners with a single internal listener per server block.
+        run_root_cmd bash -lc "
+tmp_file=\$(mktemp)
+awk '
+  BEGIN { in_server=0; inserted=0 }
+  /^[[:space:]]*server[[:space:]]*\{/ {
+    in_server=1
+    inserted=0
+    print
+    next
+  }
+  in_server && /^[[:space:]]*listen[[:space:]]+/ {
+    if (\$0 ~ /80|443|ssl/) {
+      if (!inserted) {
+        print \"    listen ${PTERO_INTERNAL_BIND};\"
+        inserted=1
+      }
+      next
+    }
+  }
+  in_server && /^[[:space:]]*ssl_/ { next }
+  /^[[:space:]]*\}/ {
+    if (in_server) {
+      in_server=0
+      inserted=0
+    }
+    print
+    next
+  }
+  { print }
+' '$file' > \"\$tmp_file\"
+mv \"\$tmp_file\" '$file'
+"
+
+        changed=1
+        log "Updated Pterodactyl NGINX config: $file"
+    done <<< "$files_raw"
+
+    if [[ "$changed" -eq 1 ]]; then
+        if run_root_cmd nginx -t >/dev/null 2>&1; then
+            run_root_cmd systemctl reload nginx || run_root_cmd service nginx reload
+            log "NGINX reloaded successfully."
+        else
+            err "NGINX config test failed after modifications. Rolling back backups..."
+            while IFS= read -r file; do
+                [[ -z "$file" ]] && continue
+                local backup_file
+                backup_file="${file}.bak-astra-npm"
+                if run_root_cmd test -f "$backup_file"; then
+                    run_root_cmd cp "$backup_file" "$file"
+                fi
+            done <<< "$files_raw"
+
+            run_root_cmd nginx -t >/dev/null 2>&1 && (run_root_cmd systemctl reload nginx || run_root_cmd service nginx reload) || true
+            err "Rollback complete. Please review Pterodactyl NGINX config manually."
+            return 1
+        fi
+    else
+        log "Pterodactyl NGINX already appears to be internal-only."
+    fi
+
+    if curl -sf "http://${PTERO_INTERNAL_BIND}" >/dev/null 2>&1; then
+        log "Pterodactyl responds on http://${PTERO_INTERNAL_BIND}"
+    else
+        warn "Could not verify HTTP response on http://${PTERO_INTERNAL_BIND}."
+        warn "Ensure panel is reachable internally before routing via NPM."
+    fi
+}
+
+setup_npm_compose() {
+    step "Creating Nginx Proxy Manager docker-compose"
+
+    run_root_cmd mkdir -p "$NPM_DIR"
+
+    run_root_cmd tee "$NPM_COMPOSE_FILE" >/dev/null <<'YAMLEOF'
+services:
+  npm:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: nginx-proxy-manager
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "81:81"
+      - "443:443"
+    volumes:
+      - ./data:/data
+      - ./letsencrypt:/etc/letsencrypt
+YAMLEOF
+
+    log "Wrote $NPM_COMPOSE_FILE"
+}
+
+open_firewall_ports_if_needed() {
+    step "Ensuring Firewall Rules"
+
+    if command -v ufw >/dev/null 2>&1; then
+        local ufw_status
+        ufw_status="$(run_root_cmd ufw status 2>/dev/null || true)"
+        if echo "$ufw_status" | grep -qi "Status: active"; then
+            run_root_cmd ufw allow 80/tcp >/dev/null 2>&1 || true
+            run_root_cmd ufw allow 81/tcp >/dev/null 2>&1 || true
+            run_root_cmd ufw allow 443/tcp >/dev/null 2>&1 || true
+            log "UFW active: ensured 80, 81, 443 are allowed."
+        else
+            log "UFW is not active; skipping firewall changes."
+        fi
+    else
+        log "UFW not installed; skipping firewall changes."
+    fi
+}
+
+start_npm() {
+    step "Starting Nginx Proxy Manager"
+
+    run_root_cmd docker compose -f "$NPM_COMPOSE_FILE" up -d
+    run_root_cmd docker compose -f "$NPM_COMPOSE_FILE" ps
+
+    local running
+    running="$(run_root_cmd docker ps --filter name=nginx-proxy-manager --format '{{.Names}}')"
+    if [[ "$running" != "nginx-proxy-manager" ]]; then
+        err "Nginx Proxy Manager container is not running."
+        return 1
+    fi
+
+    log "Nginx Proxy Manager is running."
+}
+
+print_npm_summary() {
+    step "NPM Access + Next Steps"
+
+    local server_ip
+    server_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    if [[ -z "$server_ip" ]]; then
+        server_ip="<SERVER_IP>"
+    fi
+
+    echo ""
+    info "NPM admin URL: http://${server_ip}:81"
+    info "Default email: admin@example.com"
+    info "Default password: changeme"
+    warn "Change default credentials immediately after first login."
+
+    echo ""
+    info "Running containers:"
+    run_root_cmd docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+
+    echo ""
+    info "Listening ports (80/81/443/8080/3000):"
+    if command -v ss >/dev/null 2>&1; then
+        run_root_cmd ss -ltnp | grep -E ':(80|81|443|8080|3000)\s' || true
+    fi
+
+    echo ""
+    info "Add these proxy hosts in NPM:"
+    info "  1) panel.yourdomain.com -> http://127.0.0.1:8080"
+    info "  2) yourdomain.com -> http://127.0.0.1:3000"
+    info "  3) Enable WebSocket support for each host"
+    info "  4) Request SSL cert in NPM (Let's Encrypt + Force SSL)"
+}
+
+setup_npm_gateway() {
+    step "NPM Gateway Setup"
+    detect_port_usage
+    install_docker_stack_if_missing
+    move_pterodactyl_to_internal_8080
+    setup_npm_compose
+    open_firewall_ports_if_needed
+    start_npm
+    detect_port_usage
+    print_npm_summary
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  STEP 8: Cleanup Old Backups
 # ══════════════════════════════════════════════════════════════════════════════
 cleanup_backups() {
@@ -1467,6 +1740,22 @@ case "${1:-}" in
         docker compose -f "$COMPOSE_FILE" ps
         ;;
 
+    --init-with-npm)
+        preflight
+        sync_env
+        setup_cloudflare_dns
+        setup_ssl
+        migrate_sqlite_to_postgres
+        deploy
+        health_check
+        setup_npm_gateway
+        setup_git_hooks
+        cleanup_backups
+        echo ""
+        log "=== Initial setup with NPM gateway complete! ==="
+        docker compose -f "$COMPOSE_FILE" ps
+        ;;
+
     --sync-env)
         sync_env
         ;;
@@ -1494,6 +1783,25 @@ case "${1:-}" in
         setup_git_hooks
         ;;
 
+    --setup-npm-gateway)
+        setup_npm_gateway
+        ;;
+
+    --deploy-with-npm)
+        preflight
+        sync_env
+        setup_cloudflare_dns
+        setup_ssl
+        backup_database
+        deploy
+        health_check
+        setup_npm_gateway
+        cleanup_backups
+        echo ""
+        log "=== Deployment with NPM gateway complete! ==="
+        docker compose -f "$COMPOSE_FILE" ps
+        ;;
+
     --help|-h)
         echo "AstraNodes Deployment Script"
         echo ""
@@ -1507,6 +1815,9 @@ case "${1:-}" in
         echo "  --ssl               Only setup SSL certificates"
         echo "  --migrate-sqlite [FILE]  Migrate SQLite database to PostgreSQL"
         echo "  --setup-hooks       Install git post-merge hook"
+        echo "  --setup-npm-gateway Configure NPM + Pterodactyl internal 8080"
+        echo "  --init-with-npm     Init flow plus NPM gateway setup"
+        echo "  --deploy-with-npm   Full deployment plus NPM gateway setup"
         echo "  --help              Show this help"
         ;;
 
