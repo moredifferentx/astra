@@ -1592,6 +1592,19 @@ setup_npm_gateway() {
     print_npm_summary
 }
 
+configure_app_ports_for_npm_mode() {
+    step "Configuring App Ports for NPM Mode"
+
+    # Keep pterodactyl on 8080 and run Astra app proxy on a separate internal port.
+    export HTTP_PORT="${HTTP_PORT:-3000}"
+    export HTTPS_PORT="${HTTPS_PORT:-4443}"
+    HEALTH_URL="http://localhost:${HTTP_PORT}/api/health"
+
+    log "Set app nginx HTTP port to ${HTTP_PORT} (host -> container 8080)."
+    log "Set app nginx HTTPS port to ${HTTPS_PORT} (host -> container 443)."
+    log "Health check URL updated to ${HEALTH_URL}"
+}
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  STEP 8: Cleanup Old Backups
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1742,6 +1755,7 @@ case "${1:-}" in
 
     --init-with-npm)
         preflight
+        configure_app_ports_for_npm_mode
         sync_env
         setup_cloudflare_dns
         setup_ssl
@@ -1789,6 +1803,7 @@ case "${1:-}" in
 
     --deploy-with-npm)
         preflight
+        configure_app_ports_for_npm_mode
         sync_env
         setup_cloudflare_dns
         setup_ssl
