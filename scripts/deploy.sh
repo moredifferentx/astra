@@ -191,16 +191,13 @@ ensure_postgres_runtime_sync() {
         -v app_user="$pg_user" \
         -v app_password="$escaped_password" \
         -v app_db="$pg_db" <<'SQLEOF' >/dev/null
-DO
-$$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user') THEN
-        EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password');
-    ELSE
-        EXECUTE format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'app_user', :'app_password');
-    END IF;
-END
-$$;
+SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user')
+\gexec
+
+SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'app_user', :'app_password')
+WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user')
+\gexec
 
 SELECT format('CREATE DATABASE %I OWNER %I', :'app_db', :'app_user')
 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'app_db')
