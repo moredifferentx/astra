@@ -1596,8 +1596,15 @@ configure_app_ports_for_npm_mode() {
     step "Configuring App Ports for NPM Mode"
 
     # Keep pterodactyl on 8080 and run Astra app proxy on a separate internal port.
-    export HTTP_PORT="${HTTP_PORT:-3000}"
-    export HTTPS_PORT="${HTTPS_PORT:-4443}"
+    if [[ -z "${HTTP_PORT:-}" || "${HTTP_PORT:-}" == "8080" ]]; then
+        export HTTP_PORT="3000"
+    fi
+
+    # Force away from 443 when NPM mode is active.
+    if [[ -z "${HTTPS_PORT:-}" || "${HTTPS_PORT:-}" == "443" ]]; then
+        export HTTPS_PORT="4443"
+    fi
+
     HEALTH_URL="http://localhost:${HTTP_PORT}/api/health"
 
     log "Set app nginx HTTP port to ${HTTP_PORT} (host -> container 8080)."
