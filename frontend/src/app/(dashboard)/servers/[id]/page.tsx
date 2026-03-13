@@ -101,9 +101,7 @@ export default function ServerManagePage() {
 
   const plan = server.planCoin || server.planReal;
 
-  const connectAddr = server.subdomain
-    ? `${server.subdomain}.astranodes.cloud`
-    : server.connectionAddress;
+  const connectAddr = server.subdomainAddress || server.connectionAddress;
 
   const copyAddress = () => {
     if (connectAddr) {

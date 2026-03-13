@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { PterodactylService } from '../pterodactyl/pterodactyl.service';
 import { DnsService } from '../dns/dns.service';
@@ -7,11 +8,16 @@ import { sanitizePath } from '../utils/path.util';
 
 @Injectable()
 export class ServerManageService {
+  private readonly cloudflareDomain: string;
+
   constructor(
     private prisma: PrismaService,
     private pterodactyl: PterodactylService,
     private dns: DnsService,
-  ) {}
+    private config: ConfigService,
+  ) {
+    this.cloudflareDomain = this.config.get<string>('app.cloudflare.domain') || 'astranodes.cloud';
+  }
 
   private async getServer(serverId: number, userId: number) {
     const server = await this.prisma.server.findUnique({ where: { id: serverId } });
@@ -264,7 +270,8 @@ export class ServerManageService {
     const server = await this.getServer(serverId, userId) as any;
     return {
       subdomain: server.subdomain || null,
-      fullAddress: server.subdomain ? `${server.subdomain}.astranodes.cloud` : null,
+      domain: this.cloudflareDomain,
+      fullAddress: server.subdomain ? `${server.subdomain}.${this.cloudflareDomain}` : null,
     };
   }
 
@@ -313,7 +320,8 @@ export class ServerManageService {
 
     return {
       subdomain: cleaned,
-      fullAddress: `${cleaned}.astranodes.cloud`,
+      domain: this.cloudflareDomain,
+      fullAddress: `${cleaned}.${this.cloudflareDomain}`,
       message: 'Subdomain set successfully',
     };
   }

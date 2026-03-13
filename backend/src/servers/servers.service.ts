@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { PterodactylService } from '../pterodactyl/pterodactyl.service';
 import { ServerStatus } from '@prisma/client';
@@ -12,10 +13,15 @@ const MAX_PAGE_SIZE = 50;
 
 @Injectable()
 export class ServersService {
+  private readonly cloudflareDomain: string;
+
   constructor(
     private prisma: PrismaService,
     private pterodactyl: PterodactylService,
-  ) {}
+    private config: ConfigService,
+  ) {
+    this.cloudflareDomain = this.config.get<string>('app.cloudflare.domain') || 'astranodes.cloud';
+  }
 
   async getAvailableNodes(planType?: string, planId?: number) {
     const nodes = await this.pterodactyl.getNodes();
@@ -133,6 +139,9 @@ export class ServersService {
       ...server,
       connectionAddress,
       subdomain: (server as any).subdomain || null,
+      subdomainAddress: (server as any).subdomain
+        ? `${(server as any).subdomain}.${this.cloudflareDomain}`
+        : null,
     };
   }
 }

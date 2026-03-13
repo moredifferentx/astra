@@ -25,7 +25,7 @@ set -euo pipefail
 # ── Configuration ──────────────────────────────────────────────────────────────
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 BACKUP_DIR="${BACKUP_DIR:-./backups}"
-HEALTH_URL="${HEALTH_URL:-http://localhost/health}"
+HEALTH_URL="${HEALTH_URL:-http://localhost/api/health}"
 HEALTH_RETRIES=10
 HEALTH_DELAY=5
 SSL_DIR="./ssl"
@@ -802,7 +802,7 @@ server {
 
     # Health check over HTTP (for internal Docker healthchecks)
     location /health {
-        proxy_pass http://backend;
+        proxy_pass http://backend/api/health;
         access_log off;
     }
 
@@ -875,7 +875,7 @@ server {
 
     # Health check (no rate limit)
     location /health {
-        proxy_pass http://backend;
+        proxy_pass http://backend/api/health;
         access_log off;
     }
 
@@ -978,7 +978,7 @@ NGINXEOF
     }
 
     location /health {
-        proxy_pass http://backend;
+        proxy_pass http://backend/api/health;
         access_log off;
     }
 
@@ -1299,7 +1299,7 @@ health_check() {
     step "Health Check"
 
     for i in $(seq 1 $HEALTH_RETRIES); do
-        if curl -sf "$HEALTH_URL" > /dev/null 2>&1 || curl -skf "https://localhost/health" > /dev/null 2>&1; then
+        if curl -sf "$HEALTH_URL" > /dev/null 2>&1 || curl -skf "https://localhost/api/health" > /dev/null 2>&1; then
             log "Health check passed!"
             return 0
         fi
@@ -1514,6 +1514,8 @@ case "${1:-}" in
         # Default: full deployment
         preflight
         sync_env
+        setup_cloudflare_dns
+        setup_ssl
         backup_database
         deploy
         health_check

@@ -38,6 +38,11 @@ export function SettingsTab({ serverId, server, onServerUpdate }: Props) {
   // Subdomain
   const [subdomain, setSubdomain] = useState('');
   const [currentSubdomain, setCurrentSubdomain] = useState<string | null>(server?.subdomain || null);
+  const [subdomainDomain, setSubdomainDomain] = useState<string>(
+    (server?.subdomainAddress && typeof server.subdomainAddress === 'string' && server.subdomainAddress.includes('.'))
+      ? server.subdomainAddress.split('.').slice(1).join('.')
+      : 'astranodes.cloud',
+  );
   const [settingSubdomain, setSettingSubdomain] = useState(false);
 
   // Auto-load network on mount
@@ -58,13 +63,14 @@ export function SettingsTab({ serverId, server, onServerUpdate }: Props) {
   useEffect(() => {
     api.get(`/servers/${serverId}/manage/subdomain`).then(({ data }) => {
       setCurrentSubdomain(data.subdomain);
+      if (data.domain) setSubdomainDomain(data.domain);
       if (data.subdomain) setSubdomain(data.subdomain);
     }).catch(() => {});
   }, [serverId]);
 
   const primaryAlloc = allocations.find((a: any) => a.isDefault) || allocations[0];
   const ipPort = primaryAlloc ? `${primaryAlloc.ipAlias || primaryAlloc.ip}:${primaryAlloc.port}` : null;
-  const displayAddress = currentSubdomain ? `${currentSubdomain}.astranodes.cloud` : ipPort;
+  const displayAddress = currentSubdomain ? `${currentSubdomain}.${subdomainDomain}` : ipPort;
 
   const copyAddress = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -96,8 +102,9 @@ export function SettingsTab({ serverId, server, onServerUpdate }: Props) {
         subdomain: subdomain.trim(),
       });
       setCurrentSubdomain(data.subdomain);
+      if (data.domain) setSubdomainDomain(data.domain);
       toast.success(`Subdomain set: ${data.fullAddress}`);
-      onServerUpdate({ ...server, subdomain: data.subdomain });
+      onServerUpdate({ ...server, subdomain: data.subdomain, subdomainAddress: data.fullAddress });
     } catch (err: any) {
       toast.error(err?.response?.data?.message || 'Failed to set subdomain');
     } finally {
@@ -111,7 +118,7 @@ export function SettingsTab({ serverId, server, onServerUpdate }: Props) {
       setCurrentSubdomain(null);
       setSubdomain('');
       toast.success('Subdomain removed');
-      onServerUpdate({ ...server, subdomain: null });
+      onServerUpdate({ ...server, subdomain: null, subdomainAddress: null });
     } catch {
       toast.error('Failed to remove subdomain');
     }
@@ -283,7 +290,7 @@ export function SettingsTab({ serverId, server, onServerUpdate }: Props) {
           <h3 className="font-semibold">Custom Subdomain</h3>
         </div>
         <p className="text-xs text-gray-500">
-          Set a custom address like <span className="font-mono text-gray-400">yourname.astranodes.cloud</span> for players to connect with.
+          Set a custom address like <span className="font-mono text-gray-400">yourname.{subdomainDomain}</span> for players to connect with.
         </p>
         <div className="flex gap-2 items-center">
           <div className="flex flex-1 items-center rounded-xl border border-white/[0.06] bg-white/[0.03] overflow-hidden">
@@ -294,7 +301,7 @@ export function SettingsTab({ serverId, server, onServerUpdate }: Props) {
               className="border-0 bg-transparent rounded-none"
               maxLength={24}
             />
-            <span className="pr-3 text-sm text-gray-500 whitespace-nowrap">.astranodes.cloud</span>
+            <span className="pr-3 text-sm text-gray-500 whitespace-nowrap">.{subdomainDomain}</span>
           </div>
           <Button onClick={handleSetSubdomain} disabled={settingSubdomain || !subdomain.trim()}>
             {settingSubdomain ? 'Saving…' : 'Set'}
@@ -303,7 +310,7 @@ export function SettingsTab({ serverId, server, onServerUpdate }: Props) {
         {currentSubdomain && (
           <div className="flex items-center justify-between rounded-lg bg-white/[0.03] px-4 py-2.5">
             <div>
-              <p className="text-sm font-mono text-[#ff7a18]">{currentSubdomain}.astranodes.cloud</p>
+              <p className="text-sm font-mono text-[#ff7a18]">{currentSubdomain}.{subdomainDomain}</p>
               <p className="text-[10px] text-gray-500">Active subdomain</p>
             </div>
             <Button variant="ghost" size="sm" onClick={handleRemoveSubdomain} className="text-red-400 hover:text-red-300">
